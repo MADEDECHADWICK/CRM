@@ -9,6 +9,7 @@ part assumes the previous one is done and working, not just written.
 ## PART 0 — Before You Open VS Code
 
 ### 0.1 Install these on your machine
+
 - **Node.js LTS** (check with `node -v` — should be 20.x or newer)
 - **pnpm**: `npm install -g pnpm`
 - **Git**: `git --version` to confirm it's already there
@@ -18,7 +19,9 @@ part assumes the previous one is done and working, not just written.
 - A **Neon** account (neon.tech) — free Postgres, no card required
 
 ### 0.2 VS Code extensions to install
+
 Open the Extensions panel (`Ctrl+Shift+X` / `Cmd+Shift+X`) and install:
+
 - **Prisma** (by Prisma) — syntax highlighting and formatting for `.prisma` files
 - **ESLint**
 - **Prettier — Code formatter**
@@ -27,12 +30,14 @@ Open the Extensions panel (`Ctrl+Shift+X` / `Cmd+Shift+X`) and install:
 - **GitLens** — optional but useful once you have real history to look back on
 
 ### 0.3 Create the project folder
+
 ```bash
 mkdir crm-monorepo && cd crm-monorepo
 code .
 ```
+
 The last command opens the folder directly in VS Code. Do everything from
-here on inside VS Code's integrated terminal (`` Ctrl+` ``), not a separate
+here on inside VS Code's integrated terminal (``Ctrl+` ``), not a separate
 terminal window — keeps everything in one place.
 
 ---
@@ -40,13 +45,16 @@ terminal window — keeps everything in one place.
 ## PART 1 — Repository & Monorepo Scaffold
 
 ### 1.1 Initialize Git and pnpm
+
 ```bash
 git init
 pnpm init
 ```
 
 ### 1.2 Create the workspace config
+
 Create `pnpm-workspace.yaml` at the root:
+
 ```yaml
 packages:
   - "apps/*"
@@ -54,10 +62,13 @@ packages:
 ```
 
 ### 1.3 Install and configure Turborepo
+
 ```bash
 pnpm add turbo --save-dev -w
 ```
+
 Create `turbo.json` at the root:
+
 ```json
 {
   "$schema": "https://turbo.build/schema.json",
@@ -71,7 +82,9 @@ Create `turbo.json` at the root:
 ```
 
 ### 1.4 Root TypeScript config
+
 Create `tsconfig.base.json` at the root:
+
 ```json
 {
   "compilerOptions": {
@@ -87,7 +100,9 @@ Create `tsconfig.base.json` at the root:
 ```
 
 ### 1.5 Git hygiene
+
 Create `.gitignore` at the root:
+
 ```
 node_modules
 dist
@@ -98,8 +113,10 @@ dist
 *.log
 .turbo
 ```
+
 Create `.env.example` at the root (real values go in `.env`, which is
 gitignored):
+
 ```
 DATABASE_URL=
 JWT_SECRET=
@@ -107,6 +124,7 @@ API_PORT=4000
 ```
 
 ### 1.6 Create the folder skeleton
+
 ```bash
 mkdir -p apps/api apps/web apps/mobile
 mkdir -p packages/core packages/ui packages/config
@@ -114,6 +132,7 @@ mkdir -p packages/core packages/ui packages/config
 
 **Checkpoint:** `git status` should show your new folders and config files,
 nothing accidentally tracked from `node_modules`. Commit:
+
 ```bash
 git add .
 git commit -m "chore: scaffold monorepo structure"
@@ -124,10 +143,12 @@ git commit -m "chore: scaffold monorepo structure"
 ## PART 2 — Database
 
 ### 2.1 Create your Neon database
+
 Go to neon.tech, sign up free, create a project. Copy the connection
 string it gives you (starts with `postgresql://`).
 
 ### 2.2 Set up Prisma inside apps/api
+
 ```bash
 cd apps/api
 pnpm init
@@ -135,9 +156,11 @@ pnpm add -D prisma typescript tsx @types/node
 pnpm add @prisma/client
 npx prisma init
 ```
+
 This creates `apps/api/prisma/schema.prisma` and an `.env` file.
 
 ### 2.3 Replace the generated schema
+
 Open `apps/api/prisma/schema.prisma` and replace its contents with the
 `schema.prisma` file already built for this project — it has every model
 (User, Organization, Department, Opportunity, StageHistoryEntry, Note,
@@ -145,6 +168,7 @@ Followup) with the Stage enum, the department-per-opportunity design, and
 all the field comments explaining why each decision was made.
 
 Update the `role` field on `User` to match the three confirmed roles:
+
 ```prisma
 enum Role {
   MARKETING_BD
@@ -154,20 +178,26 @@ enum Role {
 ```
 
 ### 2.4 Set your real connection string
+
 In `apps/api/.env`:
+
 ```
 DATABASE_URL="<paste your Neon connection string here>"
 ```
 
 ### 2.5 Run your first migration
+
 ```bash
 npx prisma migrate dev --name init
 ```
+
 This creates the actual tables in your Neon database. If it succeeds, you
 now have a real, running Postgres database matching the ERD.
 
 ### 2.6 Seed some data
+
 Create `apps/api/prisma/seed.ts`:
+
 ```typescript
 import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
@@ -211,19 +241,25 @@ async function main() {
 
 main().finally(() => prisma.$disconnect());
 ```
+
 Add a script to `apps/api/package.json`:
+
 ```json
 "scripts": { "seed": "tsx prisma/seed.ts" }
 ```
+
 Run it:
+
 ```bash
 pnpm seed
 ```
 
 ### 2.7 Verify visually
+
 ```bash
 npx prisma studio
 ```
+
 This opens a browser GUI showing your actual data. Confirm the seeded
 rows are there before moving on.
 
@@ -236,6 +272,7 @@ real seeded rows. Commit your `schema.prisma` and `seed.ts` (never commit
 ## PART 3 — Backend API (Modular Monolith)
 
 ### 3.1 Install the server framework and essentials
+
 ```bash
 cd apps/api
 pnpm add express cors zod jsonwebtoken bcryptjs
@@ -243,7 +280,9 @@ pnpm add -D @types/express @types/cors @types/jsonwebtoken @types/bcryptjs nodem
 ```
 
 ### 3.2 Folder structure
+
 Create this structure inside `apps/api/src/`:
+
 ```
 src/
 ├── modules/
@@ -261,18 +300,22 @@ src/
 ```
 
 ### 3.3 The Prisma client singleton
+
 `src/lib/prisma.ts`:
+
 ```typescript
 import { PrismaClient } from "@prisma/client";
 export const prisma = new PrismaClient();
 ```
 
 ### 3.4 The data-scope authorization middleware
+
 This is the single most important file for enforcing the Roles &
 Permission Matrix — every module below calls this instead of writing its
 own role check.
 
 `src/middleware/authorize.ts`:
+
 ```typescript
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
@@ -304,7 +347,9 @@ export function opportunityScope(user: AuthedRequest["user"]) {
 ```
 
 ### 3.5 Auth module
+
 `src/modules/auth/auth.routes.ts`:
+
 ```typescript
 import { Router } from "express";
 import jwt from "jsonwebtoken";
@@ -325,7 +370,9 @@ authRouter.post("/login", async (req, res) => {
 ```
 
 ### 3.6 Organizations module
+
 `src/modules/organizations/organizations.routes.ts`:
+
 ```typescript
 import { Router } from "express";
 import { z } from "zod";
@@ -361,11 +408,13 @@ organizationsRouter.post("/", async (req: AuthedRequest, res) => {
 ```
 
 ### 3.7 Opportunities module — including the transition endpoint
+
 This is where `transitionOpportunity.ts` (already built) plugs in
 directly — copy that file into `src/modules/opportunities/transitionOpportunity.ts`
 and wire it to a route:
 
 `src/modules/opportunities/opportunities.routes.ts`:
+
 ```typescript
 import { Router } from "express";
 import { prisma } from "../../lib/prisma";
@@ -423,6 +472,7 @@ opportunitiesRouter.post("/:id/reassign", async (req: AuthedRequest, res) => {
 ```
 
 ### 3.8 Notes and Followups modules
+
 Copy the logic from `followupActions.ts` (already built) into
 `src/modules/followups/followups.routes.ts`, wrapping `createFollowup` and
 `deleteFollowup` as `POST /followups` and `DELETE /followups/:id`. Notes
@@ -430,7 +480,9 @@ follow the same simple pattern as Organizations above — a `POST /notes`
 that accepts `body`, optional `organizationId`, optional `opportunityId`.
 
 ### 3.9 Reporting module
+
 `src/modules/reporting/reporting.routes.ts`:
+
 ```typescript
 import { Router } from "express";
 import { prisma } from "../../lib/prisma";
@@ -458,11 +510,14 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
   });
 });
 ```
+
 This is BR-014 in practice — the number comes from a live aggregation
 query, never a hand-typed figure.
 
 ### 3.10 Wire it all together
+
 `src/app.ts`:
+
 ```typescript
 import express from "express";
 import cors from "cors";
@@ -483,7 +538,9 @@ app.use("/reporting", reportingRouter);
 const port = process.env.API_PORT || 4000;
 app.listen(port, () => console.log(`API running on http://localhost:${port}`));
 ```
+
 Add to `apps/api/package.json`:
+
 ```json
 "scripts": {
   "dev": "nodemon --exec tsx src/app.ts",
@@ -492,12 +549,15 @@ Add to `apps/api/package.json`:
 ```
 
 ### 3.11 Run it
+
 ```bash
 pnpm dev
 ```
 
 ### 3.12 Test with Thunder Client
+
 In VS Code, open Thunder Client and:
+
 1. `POST http://localhost:4000/auth/login` with `{ "userId": "<an id from Prisma Studio>" }` — copy the returned token.
 2. `GET http://localhost:4000/organizations` with header `Authorization: Bearer <token>` — you should see your seeded org.
 3. `GET http://localhost:4000/opportunities` — confirm a Manager token only sees their own, and a Partner/BD token sees everything.
@@ -510,17 +570,22 @@ rule, that your seeded data proves works. Commit everything in `apps/api`.
 ## PART 4 — Shared Packages
 
 ### 4.1 packages/core
+
 ```bash
 cd packages/core
 pnpm init
 mkdir src
 ```
+
 Copy the already-built `theme.ts` into `packages/core/src/theme.ts`.
 Create `packages/core/src/index.ts`:
+
 ```typescript
 export * from "./theme";
 ```
+
 Add an `api-client.ts` alongside it:
+
 ```typescript
 const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -532,14 +597,17 @@ export async function apiFetch(path: string, token: string, options: RequestInit
   return res.json();
 }
 ```
+
 Export it from `index.ts` too.
 
 ### 4.2 packages/ui
+
 ```bash
 cd ../ui
 pnpm init
 mkdir src
 ```
+
 Copy the already-built `Badge.tsx` into `packages/ui/src/Badge.tsx`, and
 create `packages/ui/src/index.ts` exporting it. You'll add DeptTag,
 IndustryIcon, and form inputs here the same way as you build them.
@@ -554,6 +622,7 @@ listed in `pnpm-workspace.yaml`.
 ## PART 5 — Mobile App (Expo)
 
 ### 5.1 Scaffold
+
 ```bash
 cd apps
 npx create-expo-app@latest mobile --template blank-typescript
@@ -564,7 +633,9 @@ pnpm add @crm/core@workspace:* @crm/ui@workspace:*
 ```
 
 ### 5.2 Prove the architecture with Badge
+
 Replace the contents of `apps/mobile/App.tsx`:
+
 ```typescript
 import { View } from "react-native";
 import { Badge } from "@crm/ui";
@@ -577,10 +648,13 @@ export default function App() {
   );
 }
 ```
+
 Run it:
+
 ```bash
 npx expo start
 ```
+
 Scan the QR code with Expo Go on your phone. **If the Badge renders with
 the correct amber color and pill shape, the monorepo architecture is
 proven working end to end.** Do not proceed to building real screens until
@@ -588,6 +662,7 @@ this works — debugging one component is far cheaper than debugging six
 screens with the same underlying wiring problem.
 
 ### 5.3 Build screens, in this order
+
 1. **Login** — a simple form posting to `/auth/login` via `apiFetch`, storing the token (React state is fine to start; persistent storage is a later refinement).
 2. **Home** — fetch `/reporting/summary` and `/opportunities`, render the stat cards.
 3. **Prospects** — fetch `/organizations`, render the card grid.
@@ -609,6 +684,7 @@ stage transition that actually persists.
 ## PART 6 — Web App (Next.js)
 
 ### 6.1 Scaffold
+
 ```bash
 cd apps
 npx create-next-app@latest web --typescript --tailwind --app
@@ -618,7 +694,9 @@ pnpm add @crm/core@workspace:* @crm/ui@workspace:*
 ```
 
 ### 6.2 Configure Next.js to transpile the shared packages
+
 In `apps/web/next.config.js`:
+
 ```javascript
 const { withExpo } = require('@expo/next-adapter');
 
@@ -626,11 +704,13 @@ module.exports = withExpo({
   transpilePackages: ["@crm/core", "@crm/ui", "react-native", "react-native-web"],
 });
 ```
+
 (`@expo/next-adapter` needs `pnpm add @expo/next-adapter` — it handles the
 React Native → web compilation config so you don't hand-write Babel/Webpack
 rules for this.)
 
 ### 6.3 Build the same six screens
+
 Same order as mobile, reusing the same `packages/ui` components — this is
 where you see the payoff of Part 4: most of the UI code is not rewritten,
 just re-imported into a different app shell (Next.js pages/layout instead
@@ -645,23 +725,28 @@ API and the same database.
 ## PART 7 — Testing
 
 ### 7.1 Install
+
 ```bash
 cd apps/api
 pnpm add -D vitest
 ```
 
 ### 7.2 Unit test the highest-risk logic first
+
 `src/modules/opportunities/transitionOpportunity.test.ts`:
+
 ```typescript
 import { describe, it, expect } from "vitest";
 // Test that Lead -> Won is rejected (BR-004), that Won requires an
 // amount, that Deferred requires a revisit date, and that every
 // transition without a decisionNote is rejected (BR-010).
 ```
+
 Write one test per business rule in the Business Rules document — this
 gives you a checklist as much as a test suite.
 
 ### 7.3 Integration test the full journey
+
 Test the whole Prospect → Lead → Proposal → Won path against a real (test)
 database, confirming a Note and a StageHistoryEntry exist afterward.
 
@@ -669,12 +754,12 @@ database, confirming a Note and a StageHistoryEntry exist afterward.
 
 ## PART 8 — Deployment
 
-| Piece | Where |
-|---|---|
-| Database | Already on Neon (Part 2) |
-| API | Render or Railway — connect your GitHub repo, point it at `apps/api`, set `DATABASE_URL` and `JWT_SECRET` env vars |
-| Web | Vercel — connect the repo, set root directory to `apps/web` |
-| Mobile | `eas build` (Expo Application Services) for an internal distribution build (TestFlight/Play internal track), since this is an internal tool, not a public app store release |
+| Piece    | Where                                                                                                                                                                         |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Database | Already on Neon (Part 2)                                                                                                                                                      |
+| API      | Render or Railway — connect your GitHub repo, point it at`apps/api`, set `DATABASE_URL` and `JWT_SECRET` env vars                                                      |
+| Web      | Vercel — connect the repo, set root directory to`apps/web`                                                                                                                 |
+| Mobile   | `eas build` (Expo Application Services) for an internal distribution build (TestFlight/Play internal track), since this is an internal tool, not a public app store release |
 
 ---
 
@@ -686,6 +771,7 @@ confuses them, not just whether they say they like it. Fix, then expand.
 ---
 
 ## What "exhaustive" doesn't mean here
+
 This guide gets you a real, working system end to end — it deliberately
 does not include things you don't need yet at this scale: no
 microservices, no message queue, no Kubernetes, no separate staging
