@@ -1,0 +1,510 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Defines the three confirmed user roles in the CRM.
+///
+/// MARKETING_BD:
+/// Users responsible for business development and managing opportunities.
+///
+/// PARTNER:
+/// Senior users who require visibility into relevant business opportunities.
+///
+/// MANAGER:
+/// Users responsible for managing and monitoring opportunities within
+/// their authorized scope.
+enum Role {
+  MARKETING_BD
+  PARTNER
+  MANAGER
+}
+
+/// Represents the lifecycle stage of an opportunity.
+///
+/// An Opportunity moves through these stages as the relationship
+/// with an organization progresses.
+///
+/// We keep the stage on Opportunity for quick access to its current state,
+/// while StageHistoryEntry preserves the complete history of transitions.
+enum Stage {
+  /// An organization or potential business opportunity identified
+  /// but not yet actively qualified.
+  PROSPECT
+
+  /// An active business opportunity that is being pursued.
+  LEAD
+
+  /// A formal proposal has been prepared or submitted.
+  PROPOSAL
+
+  /// The opportunity was successfully converted into business.
+  WON
+
+  /// The opportunity was unsuccessful.
+  LOST
+
+  /// The organization has not provided a response.
+  NO_REPLY
+
+  /// The opportunity has been postponed and may be revisited later.
+  DEFERRED
+}
+
+/// Represents the completion state of a follow-up.
+///
+/// This is intentionally separate from Stage because a follow-up
+/// is an activity, while Stage represents the overall state
+/// of a business opportunity.
+enum FollowupStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+/// Represents a system user.
+///
+/// Users interact with opportunities, create notes,
+/// schedule follow-ups, and may change opportunity stages.
+model User {
+  /// Primary identifier using UUID to avoid exposing sequential IDs.
+  id String @id @default(uuid())
+
+  /// User's full name for identification throughout the CRM.
+  name String
+
+  /// Email is unique because it will be used as a login identifier.
+  email String @unique
+
+  /// Stores the user's authorization role.
+  ///
+  /// Role controls what type of access the user has in the CRM.
+  role Role
+
+  /// Optional department association.
+  ///
+  /// This can support department-based visibility rules later.
+  /// It remains optional because senior users such as Partners may
+  /// not necessarily belong to only one operational department.
+  departmentId String?
+
+  /// Reference to the user's primary department.
+
+  department Department? @relation("DepartmentUsers",fields: [departmentId],references: [id])
+  /// Opportunities created by this user.
+  createdOpprtunites Opportunity[] @relation("OpportunityCreatedBy")
+  /// Opportunities currently owned or managed by this user.
+  ///
+  /// Ownership is separate from creation because an opportunity
+  /// may be transferred between users.
+  ownerOpportunities Opportunity[] @relation("OpportunityOwner")
+  /// Stage changes performed by this user.
+  stageHistoryEntries StageHistoryEntry[]
+
+  /// Notes created by this user.
+  notes Note[]
+
+  /// Follow-ups assigned to this user.
+  assignedFollowups Followup[] @relation("FollowupAssignedTo")
+  /// Follow-ups created by this user.
+  createdFollowups Followup [] @relation("FollowupCreatedBy")
+  /// Timestamp recording when the user was created.
+  createdAt DateTime @default(now())
+
+  /// Automatically updated whenever the user record changes.
+  updatedAt DateTime @updatedAt
+
+  @@index([departmentId])
+  @@index([role])
+}
+
+/// Represents a business department within the organization.
+///
+/// Departments are deliberately modeled separately because an
+/// organization may have multiple independent opportunities
+/// with different departments.
+///
+/// Example:
+///
+/// ABC Ltd
+/// ├── Opportunity with Audit Department
+/// └── Opportunity with Consulting Department
+///
+/// Therefore, Department belongs to Opportunity rather than
+/// assigning one global department directly to Organization.
+model Department {
+  /// Primary UUID identifier.
+  id String @id @default(uuid())
+
+  /// Human-readable department name.
+  ///
+  /// Example:
+  /// Audit
+  /// Consulting
+  /// Technology
+  name String @unique
+
+  /// Optional explanation of the department's purpose.
+  description String?
+
+  /// Users primarily associated with this department.
+  users User[] @relation("DepartmentUsers")
+
+  /// Opportunities being handled by this department.
+  opportunities Opportunity[]
+
+  /// Timestamp recording when the department was created.
+  createdAt DateTime @default(now())
+
+  /// Automatically updated whenever the department changes.
+  updatedAt DateTime @updatedAt
+}
+
+/// Represents an external organization or company.
+///
+/// Organization is intentionally separated from Opportunity.
+///
+/// One organization can have multiple business opportunities
+/// at the same time, potentially across different departments.
+model Organization {
+  /// Primary UUID identifier.
+  id String @id @default(uuid())
+
+  /// Official organization name.
+  name String
+
+  /// Optional industry classification.
+  ///
+  /// This supports segmentation and reporting without making
+  /// industry mandatory during initial data capture.
+  industry String?
+
+  /// Optional website.
+  website String?
+
+  /// Primary organization email.
+  email String?
+
+  /// Primary organization phone number.
+  phone String?
+
+  /// Optional physical address.
+  address String?
+
+  /// Optional general notes about the organization.
+  ///
+  /// Detailed chronological notes belong in the Note model.
+  description String?
+
+  /// All business opportunities associated with this organization.
+  ///
+  /// This relationship is critical because an organization can
+  /// have multiple independent opportunities.
+  opportunities Opportunity[]
+
+  /// Timestamp recording when the organization was added.
+  createdAt DateTime @default(now())
+
+  /// Automatically updated whenever organization data changes.
+  updatedAt DateTime @updatedAt
+
+  /// Index supports faster organization searches.
+  @@index([name])
+
+  /// Index supports industry-based filtering and reporting.
+  @@index([industry])
+}
+
+/// Represents a specific business opportunity.
+///
+/// Opportunity is the central entity in this CRM architecture.
+///
+/// Instead of treating "Lead", "Proposal", and "Client" as completely
+/// separate entities, an opportunity progresses through stages.
+///
+/// Example:
+///
+/// PROSPECT
+///     ↓
+/// LEAD
+///     ↓
+/// PROPOSAL
+///     ↓
+/// WON / LOST / NO_REPLY / DEFERRED
+///
+/// The organization relationship identifies WHO the opportunity is with.
+///
+/// The department relationship identifies WHICH internal department
+/// is pursuing the opportunity.
+///
+/// This solves the problem where one organization may simultaneously
+/// have opportunities with multiple departments.
+model Opportunity {
+  /// Primary UUID identifier.
+  id String @id @default(uuid())
+
+  /// Short descriptive name for the opportunity.
+  ///
+  /// Example:
+  /// "FY2026 External Audit Engagement"
+  title String
+
+  /// Detailed explanation of the business opportunity.
+  description String?
+
+  /// Current lifecycle stage.
+  ///
+  /// This stores the latest stage for fast querying.
+  ///
+  /// Historical changes are stored separately in StageHistoryEntry.
+  stage Stage @default(PROSPECT)
+
+  /// Estimated or proposed monetary value of the opportunity.
+  ///
+  /// Decimal is used instead of Float to prevent financial
+  /// precision problems.
+  amount Decimal? @db.Decimal(18, 2)
+
+  /// Currency code associated with the opportunity amount.
+  ///
+  /// Example:
+  /// KES
+  /// USD
+  ///
+  /// Keeping currency separate supports future multi-currency use.
+  currency String @default("KES")
+
+  /// Reference to the external organization.
+  organizationId String
+
+  /// The organization involved in this opportunity.
+  organization Organization @relation(fields: [organizationId],references: [id], onDelete: Restrict)
+  /// Reference to the internal department handling this opportunity.
+  ///
+  /// Department belongs to the Opportunity rather than Organization
+  /// because the same organization can engage multiple departments.
+  departmentId String
+
+  /// Internal department responsible for pursuing the opportunity.
+  department Department @relation(fields: [departmentId],references: [id],onDelete: Restrict)
+  /// User who originally created the opportunity.
+  createdById String
+
+  /// Relationship to the user who created the opportunity.
+  createdBy User @relation("OpportunityCreatedBy", fields: [createdById],references: [id], onDelete: Restrict)
+  /// User currently responsible for managing the opportunity.
+  ///
+  /// Ownership is separate from createdBy because responsibility
+  /// can change during the opportunity lifecycle.
+  ownerId String?
+
+  /// Current opportunity owner.
+  owner User? @relation("OpportunityOwner",fields: [ownerId],references: [id], onDelete: SetNull)
+  /// Complete record of every stage transition.
+  stageHistory StageHistoryEntry[]
+
+  /// Notes associated with this opportunity.
+  notes Note[]
+
+  /// Follow-up activities associated with this opportunity.
+  followups Followup[]
+
+  /// Date the opportunity was first created.
+  createdAt DateTime @default(now())
+
+  /// Automatically updated whenever the opportunity changes.
+  updatedAt DateTime @updatedAt
+
+  /// Optional date when the opportunity was successfully won.
+  ///
+  /// This is useful for revenue reporting and conversion analysis.
+  wonAt DateTime?
+
+  /// Optional date when the opportunity was closed as unsuccessful.
+  ///
+  /// This allows reporting on lost opportunities without
+  /// relying only on updatedAt.
+  lostAt DateTime?
+
+  /// Supports filtering opportunities by organization.
+  @@index([organizationId])
+
+  /// Supports department-specific pipeline queries.
+  @@index([departmentId])
+
+  /// Supports filtering by current owner.
+  @@index([ownerId])
+
+  /// Supports pipeline queries by stage.
+  @@index([stage])
+
+  /// Useful for common dashboard queries.
+  @@index([departmentId, stage])
+
+  /// Useful for organization-specific opportunity views.
+  @@index([organizationId, stage])
+}
+
+/// Records every stage transition made to an Opportunity.
+///
+/// We do not rely only on Opportunity.stage because overwriting
+/// the current stage would destroy historical information.
+///
+/// Example:
+///
+/// PROSPECT → LEAD
+/// LEAD → PROPOSAL
+/// PROPOSAL → WON
+///
+/// Each transition becomes a permanent historical record.
+model StageHistoryEntry {
+  /// Primary UUID identifier.
+  id String @id @default(uuid())
+
+  /// Opportunity whose stage changed.
+  opportunityId String
+
+  /// Relationship to the relevant opportunity.
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  /// Previous stage.
+  ///
+  /// Nullable because the first history entry may represent
+  /// the initial creation of an opportunity.
+  fromStage Stage?
+
+  /// New stage after the transition.
+  toStage Stage
+
+  /// User who performed the stage change.
+  changedById String
+
+  /// Relationship to the user who changed the stage.
+  changedBy User @relation(fields: [changedById], references: [id], onDelete: Restrict)
+
+  /// Optional explanation for the stage transition.
+  ///
+  /// Particularly useful when marking an opportunity LOST,
+  /// DEFERRED, or NO_REPLY.
+  reason String?
+
+  /// Exact time when the stage change occurred.
+  changedAt DateTime @default(now())
+
+  /// Supports retrieving an opportunity's timeline in order.
+  @@index([opportunityId, changedAt])
+
+  /// Supports audit queries by user.
+  @@index([changedById])
+}
+
+/// Represents a contextual note attached to an Opportunity.
+///
+/// Notes are separated from the Opportunity description because
+/// CRM notes are chronological and should not overwrite each other.
+///
+/// Example:
+///
+/// Jan 10 - Initial meeting completed
+/// Jan 15 - Client requested revised proposal
+/// Jan 20 - Awaiting management decision
+model Note {
+  /// Primary UUID identifier.
+  id String @id @default(uuid())
+
+  /// Main content of the note.
+  ///
+  /// Text is used because CRM notes can vary significantly in length.
+  content String @db.Text
+
+  /// Opportunity this note belongs to.
+  opportunityId String
+
+  /// Relationship to the relevant opportunity.
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  /// User who created the note.
+  authorId String
+
+  /// Relationship to the note author.
+  author User @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  /// Timestamp recording when the note was created.
+  createdAt DateTime @default(now())
+
+  /// Automatically updated if the note is edited.
+  updatedAt DateTime @updatedAt
+
+  /// Supports loading notes for an opportunity chronologically.
+  @@index([opportunityId, createdAt])
+
+  /// Supports user activity queries.
+  @@index([authorId])
+}
+
+/// Represents a scheduled follow-up activity.
+///
+/// Follow-ups are attached directly to Opportunity because the
+/// follow-up exists in the context of a specific business pursuit.
+///
+/// This prevents generic tasks from becoming disconnected from
+/// the CRM pipeline.
+model Followup {
+  /// Primary UUID identifier.
+  id String @id @default(uuid())
+
+  /// Short description of the follow-up.
+  ///
+  /// Example:
+  /// "Call client regarding proposal feedback"
+  title String
+
+  /// Optional additional details.
+  description String?
+
+  /// Current completion state.
+  status FollowupStatus @default(PENDING)
+
+  /// Date and time when the follow-up should happen.
+  dueDate DateTime
+
+  /// Date and time when the follow-up was completed.
+  ///
+  /// Null until completion.
+  completedAt DateTime?
+
+  /// Opportunity this follow-up belongs to.
+  opportunityId String
+
+  /// Relationship to the relevant opportunity.
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  /// User responsible for completing the follow-up.
+  assignedToId String?
+
+  /// Relationship to the assigned user.
+  assignedTo User? @relation("FollowupAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  /// User who originally created the follow-up.
+  createdById String
+
+  /// Relationship to the user who created it.
+  createdBy User @relation("FollowupCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  /// Timestamp recording when the follow-up was created.
+  createdAt DateTime @default(now())
+
+  /// Automatically updated when the follow-up changes.
+  updatedAt DateTime @updatedAt
+
+  /// Supports dashboard queries for pending follow-ups.
+  @@index([status])
+
+  /// Supports queries for upcoming and overdue follow-ups.
+  @@index([dueDate])
+
+  /// Supports user-specific task views.
+  @@index([assignedToId])
+
+  /// Supports loading follow-ups within an opportunity.
+  @@index([opportunityId, dueDate])
+}
