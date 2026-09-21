@@ -1,5 +1,5 @@
 import { prisma } from "../../lib/prisma";
-import type { Stage } from "../../../generated/prisma/client";
+import { ALLOWED_TRANSITIONS, canTransition, type Stage } from "@crm/core";
 
 type TransitionInput = {
   opportunityId: string;
@@ -8,23 +8,11 @@ type TransitionInput = {
   reason: string;        // REQUIRED on every transition — BR-010, stored on StageHistoryEntry
   amount?: number;       // required specifically when toStage is WON
   revisitAt?: Date;      // required specifically when toStage is DEFERRED
-};
-
-// Matches your actual Stage enum, including PROSPECT as the starting stage.
-// A Lead has no proposal yet, so it cannot resolve directly to an outcome —
-// Proposal is the only door out of Lead, same logic for Prospect → Lead.
-const ALLOWED_TRANSITIONS: Record<Stage, Stage[]> = {
-  PROSPECT: ["LEAD"],
-  LEAD: ["PROPOSAL"],
-  PROPOSAL: ["WON", "LOST", "NO_REPLY", "DEFERRED"],
-  DEFERRED: ["PROPOSAL", "WON", "LOST", "NO_REPLY"],
-  WON: [],
-  LOST: [],
-  NO_REPLY: [],
+  lostReason?: string;   // optional structured reason when toStage is LOST (BR-007)
 };
 
 export async function transitionOpportunity(input: TransitionInput) {
-  const { opportunityId, toStage, changedById, reason, amount, revisitAt } = input;
+  const { opportunityId, toStage, changedById, reason, amount, revisitAt, lostReason } = input;
 
   // Field-level validation before touching the database.
   if (!reason || !reason.trim()) {
@@ -46,7 +34,7 @@ export async function transitionOpportunity(input: TransitionInput) {
       where: { id: opportunityId },
     });
 
-    if (!ALLOWED_TRANSITIONS[current.stage].includes(toStage)) {
+    if (!canTransition(current.stage, toStage)) {
       throw new Error(`Cannot move an opportunity from ${current.stage} directly to ${toStage}.`);
     }
 
@@ -57,6 +45,13 @@ export async function transitionOpportunity(input: TransitionInput) {
         amount: amount ?? current.amount,
         wonAt: toStage === "WON" ? new Date() : current.wonAt,
         lostAt: toStage === "LOST" ? new Date() : current.lostAt,
+        // The stage clock resets on every transition — this is what powers
+        // "days in stage".
+        stageEnteredAt: new Date(),
+        // BR-008: DEFERRED carries the revisit date that drives its follow-up.
+        revisitAt: toStage === "DEFERRED" ? revisitAt : null,
+        // BR-007: structured lost reason, only meaningful on a LOST outcome.
+        lostReason: toStage === "LOST" ? lostReason ?? null : null,
       },
     });
 
@@ -73,18 +68,18 @@ export async function transitionOpportunity(input: TransitionInput) {
       },
     });
 
-    // Deferring creates its own Followup automatically — since there's no
-    // dedicated revisitAt column on Opportunity, the Followup's dueDate IS
-    // the revisit date. This is what makes BR-008 real: a deferred deal
-    // resurfaces on the assignee's own follow-up list without anyone
-    // needing to remember to check back manually.
+    // Deferring creates its own Followup automatically — the revisit
+    // date stored on the Opportunity becomes the reminder's dueAt, so a
+    // deferred deal resurfaces on the assignee's own follow-up list
+    // without anyone needing to remember to check back manually (BR-008).
     if (toStage === "DEFERRED" && revisitAt) {
       await tx.followup.create({
         data: {
-          title: `Revisit deferred opportunity: ${current.title}`,
-          dueDate: revisitAt,
+          note: `Revisit deferred opportunity: ${current.title}`,
+          type: "CALL",
+          dueAt: revisitAt,
           opportunityId,
-          assignedToId: changedById,
+          assignedToId: current.ownerId ?? changedById,
           createdById: changedById,
         },
       });

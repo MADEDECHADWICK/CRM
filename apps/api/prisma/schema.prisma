@@ -66,6 +66,13 @@ enum FollowupStatus {
   CANCELLED
 }
 
+/// Represents the kind of follow-up activity (BRD / ERD).
+enum FollowupType {
+  CALL
+  EMAIL
+  MEETING
+}
+
 /// Represents a system user.
 ///
 /// Users interact with opportunities, create notes,
@@ -73,6 +80,8 @@ enum FollowupStatus {
 model User {
   /// Primary identifier using UUID to avoid exposing sequential IDs.
   id String @id @default(uuid())
+
+  passwordHash String?
 
   /// User's full name for identification throughout the CRM.
   name String
@@ -206,6 +215,13 @@ model Organization {
   /// have multiple independent opportunities.
   opportunities Opportunity[]
 
+  /// Notes optionally linked to this organization (BR-011 — a reminder
+  /// with no CRM context at all is still valid, so both links are optional).
+  notes Note[]
+
+  /// Follow-ups optionally linked to this organization.
+  followups Followup[]
+
   /// Timestamp recording when the organization was added.
   createdAt DateTime @default(now())
 
@@ -277,6 +293,36 @@ model Opportunity {
   ///
   /// Keeping currency separate supports future multi-currency use.
   currency String @default("KES")
+
+  /// The service being offered by the pursuing department.
+  ///
+  /// BR-003 makes this mandatory at creation — a lead cannot exist
+  /// without an organization, the department pursuing it, and the
+  /// service being offered.
+  ///
+  /// Example:
+  /// "FY2027 Statutory Audit"
+  service String
+
+  /// The moment the opportunity entered its current stage.
+  ///
+  /// Resets on every transition — this is what powers "days in stage"
+  /// reporting instead of relying on createdAt or updatedAt.
+  stageEnteredAt DateTime @default(now())
+
+  /// Set only when stage = DEFERRED.
+  ///
+  /// BR-008 requires a future revisit date when deferring, and the
+  /// automatic follow-up reminder generated at that time is scheduled
+  /// against this date.
+  revisitAt DateTime?
+
+  /// Optional structured reason for a LOST outcome (BR-007).
+  ///
+  /// "Client decided to postpone indefinitely" vs "Pricing too high"
+  /// — kept separate from the mandatory decision note so lost-opportunity
+  /// reporting can be structured without forcing quotes into free text.
+  lostReason String?
 
   /// Reference to the external organization.
   organizationId String
@@ -419,13 +465,18 @@ model Note {
   /// Main content of the note.
   ///
   /// Text is used because CRM notes can vary significantly in length.
-  content String @db.Text
+  body String @db.Text
 
-  /// Opportunity this note belongs to.
-  opportunityId String
+  /// Opportunity this note belongs to (optional).
+  opportunityId String?
 
-  /// Relationship to the relevant opportunity.
-  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  /// Relationship to the relevant opportunity, if any.
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  /// Organization this note belongs to (optional).
+  organizationId String?
+
+  /// Relationship to the relevant organization, if any.
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   /// User who created the note.
   authorId String
 
@@ -439,6 +490,9 @@ model Note {
 
   /// Supports loading notes for an opportunity chronologically.
   @@index([opportunityId, createdAt])
+
+  /// Supports loading notes for an organization chronologically.
+  @@index([organizationId, createdAt])
 
   /// Supports user activity queries.
   @@index([authorId])
@@ -455,20 +509,27 @@ model Followup {
   /// Primary UUID identifier.
   id String @id @default(uuid())
 
+  /// Kind of follow-up activity (BRD & ERD).
+  type FollowupType @default(CALL)
+
   /// Short description of the follow-up.
   ///
   /// Example:
   /// "Call client regarding proposal feedback"
-  title String
+  note String
 
-  /// Optional additional details.
-  description String?
+  /// Whether the reminder also links to an opportunity's organization.
+  ///
+  /// BR-011 keeps both links optional — a reminder with no CRM context
+  /// at all is still a valid, personal follow-up.
+  organizationId String?
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   /// Current completion state.
   status FollowupStatus @default(PENDING)
 
   /// Date and time when the follow-up should happen.
-  dueDate DateTime
+  dueAt DateTime
 
   /// Date and time when the follow-up was completed.
   ///
@@ -476,10 +537,10 @@ model Followup {
   completedAt DateTime?
 
   /// Opportunity this follow-up belongs to.
-  opportunityId String
+  opportunityId String?
 
   /// Relationship to the relevant opportunity.
-  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   /// User responsible for completing the follow-up.
   assignedToId String?
 
@@ -500,11 +561,14 @@ model Followup {
   @@index([status])
 
   /// Supports queries for upcoming and overdue follow-ups.
-  @@index([dueDate])
+  @@index([dueAt])
 
   /// Supports user-specific task views.
   @@index([assignedToId])
 
   /// Supports loading follow-ups within an opportunity.
-  @@index([opportunityId, dueDate])
+  @@index([opportunityId, dueAt])
+
+  /// Supports loading follow-ups within an organization.
+  @@index([organizationId, dueAt])
 }

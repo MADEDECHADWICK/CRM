@@ -17,6 +17,7 @@ async function main() {
   });
 
   const audit = await prisma.department.create({ data: { name: "Audit" } });
+  const tax = await prisma.department.create({ data: { name: "Tax" } });
 
   const org = await prisma.organization.create({
     data: {
@@ -35,7 +36,9 @@ async function main() {
       createdById: grace.id, // required — who originated this opportunity
       ownerId: john.id,       // who currently owns/manages it
       stage: "PROPOSAL",
+      service: "Statutory audit FY2027",
       amount: 450000,
+      stageEnteredAt: new Date(),
     },
   });
 

@@ -1,13 +1,15 @@
-// packages/core/src/api-client.ts
-//
-// Deliberately does NOT read process.env itself — Expo (EXPO_PUBLIC_*) and
-// Next.js (NEXT_PUBLIC_*) use different env var prefixes for client-exposed
-// variables, and this package doesn't know which bundler is consuming it.
-// Each app resolves its own URL and passes it in.
-
 export type ApiResponse<T> =
-  | { success: true; data: T }
-  | { success: false; error: { code: string; message?: string } };
+  | {
+      success: true;
+      data: T;
+    }
+  | {
+      success: false;
+      error: {
+        code: string;
+        message?: string;
+      };
+    };
 
 export function createApiClient(baseUrl: string) {
   return async function apiFetch<T = unknown>(
@@ -15,23 +17,58 @@ export function createApiClient(baseUrl: string) {
     token: string | null,
     options: RequestInit = {}
   ): Promise<T> {
-    const res = await fetch(`${baseUrl}${path}`, {
+    const url = `${baseUrl}${path}`;
+
+    const response = await fetch(url, {
       ...options,
       headers: {
+        Accept: "application/json",
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(token
+          ? {
+              Authorization: `Bearer ${token}`,
+            }
+          : {}),
         ...options.headers,
       },
     });
 
-    const body: ApiResponse<T> = await res.json();
+    const contentType =
+      response.headers.get("content-type") ?? "";
 
-    // Matches your actual API's { success, data } / { success, error }
-    // shape — callers get either real data back or a thrown error with a
-    // real message, instead of having to check `.success` everywhere
-    // they call this.
-    if (!body.success) {
-      throw new Error(body.error?.message || body.error?.code || "Request failed");
+    const responseText = await response.text();
+
+    if (!contentType.includes("application/json")) {
+      console.error("Expected JSON but received:", {
+        url,
+        status: response.status,
+        contentType,
+        responseText: responseText.slice(0, 300),
+      });
+
+      throw new Error(
+        `API returned a non-JSON response (${response.status})`
+      );
+    }
+
+    let body: ApiResponse<T>;
+
+    try {
+      body = JSON.parse(responseText) as ApiResponse<T>;
+    } catch {
+      throw new Error(
+        `API returned invalid JSON (${response.status})`
+      );
+    }
+
+    if (!response.ok || !body.success) {
+      throw new Error(
+        body.success
+          ? `Request failed with status ${response.status}`
+          : body.error?.message ||
+              body.error?.code ||
+              "Request failed"
+      );
     }
 
     return body.data;
