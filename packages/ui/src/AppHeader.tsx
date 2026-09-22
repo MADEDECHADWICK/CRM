@@ -1,66 +1,40 @@
 // packages/ui/src/AppHeader.tsx
 //
-// The standard app screen header: a large editorial title with optional
-// subtitle and a right-aligned action slot (avatar, filter, add, etc.).
+// The standard app screen header. This is now a thin delegate over the shared
+// PageHero band so every screen carries the exact same brand treatment: a soft
+// brand-tinted strip with a monogram tile, an icon, the title + subtitle, and
+// an optional right-aligned slot. Kept as AppHeader so all existing screens
+// (Prospects, Pipeline, Follow-ups, Reports, Team) inherit the styled band
+// without any per-screen churn — pass a per-screen `icon` to differentiate.
 
 import type { ReactNode } from "react";
-import { StyleSheet, Text, View } from "react-native";
 
 import { tokens } from "@crm/core";
 
-import { topInset } from "./util";
+import { PageHero } from "./PageHero";
+import { IconSet } from "./icons";
 
 type AppHeaderProps = {
+  icon?: string;
   title: string;
   subtitle?: string;
   right?: ReactNode;
 };
 
 export function AppHeader({
+  icon,
   title,
   subtitle,
   right,
 }: AppHeaderProps) {
   return (
-    <View style={styles.header}>
-      <View style={styles.textCol}>
-        <Text style={styles.title}>{title}</Text>
-        {subtitle ? (
-          <Text style={styles.subtitle}>{subtitle}</Text>
-        ) : null}
-      </View>
-
-      {right ? <View style={styles.right}>{right}</View> : null}
-    </View>
+    <PageHero
+      icon={icon ?? IconSet.Pipeline}
+      tint={tokens.color.brandSoft}
+      iconColor={tokens.color.brand}
+      title={title}
+      subtitle={subtitle}
+      right={right}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  header: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    paddingTop: topInset,
-    paddingBottom: 16,
-  },
-
-  textCol: {
-    flex: 1,
-    paddingRight: 12,
-  },
-
-  title: {
-    ...tokens.type.h1,
-    color: tokens.color.ink,
-  },
-
-  subtitle: {
-    ...tokens.type.caption,
-    color: tokens.color.inkMuted,
-    marginTop: 5,
-  },
-
-  right: {
-    marginBottom: 2,
-  },
-});

@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { tokens } from "@crm/core";
-import { Button, Screen, TextField, Icon, IconSet, topInset } from "@crm/ui";
+import { Button, Screen, TextField, Icon, IconSet } from "@crm/ui";
 
 import { useAuth } from "../auth/AuthContext";
 
@@ -11,6 +11,7 @@ export function LoginScreen() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function handleLogin() {
@@ -38,22 +39,39 @@ export function LoginScreen() {
   return (
     <Screen>
       <View style={styles.container}>
-        <View style={styles.brandRow}>
-          <View style={styles.mark}>
-            <Icon name={IconSet.Check} size={22} color={tokens.color.brand} />
+        <View style={styles.hero}>
+          <View style={styles.brandRow}>
+            <View style={styles.mark}>
+              <Icon
+                name={IconSet.Check}
+                size={22}
+                color={tokens.color.onBrand}
+              />
+            </View>
+
+            <View>
+              <Text style={styles.wordmark}>Firm CRM</Text>
+              <Text style={styles.wordmarkSub}>Professional services</Text>
+            </View>
           </View>
 
-          <View>
-            <Text style={styles.wordmark}>Firm CRM</Text>
-            <Text style={styles.wordmarkSub}>Professional services</Text>
+          <View style={styles.heroHeading}>
+            <Text style={styles.heroTitle}>Welcome back.</Text>
+            <Text style={styles.heroSubtitle}>
+              Sign in to manage your clients, deals and team under one roof.
+            </Text>
           </View>
-        </View>
 
-        <View style={styles.heading}>
-          <Text style={styles.title}>Welcome back.</Text>
-          <Text style={styles.subtitle}>
-            Sign in to manage your clients and pipeline.
-          </Text>
+          <View style={styles.heroStrip}>
+            <Icon
+              name={IconSet.Check}
+              size={14}
+              color={tokens.color.onBrand}
+            />
+            <Text style={styles.heroStripText}>
+              Scoped per role · secured & private
+            </Text>
+          </View>
         </View>
 
         <View style={styles.card}>
@@ -67,14 +85,33 @@ export function LoginScreen() {
             autoCorrect={false}
           />
 
+          <View style={styles.spacing} />
+
           <TextField
             label="Password"
             value={password}
             onChangeText={setPassword}
             placeholder="Your password"
-            secureTextEntry
+            secureTextEntry={!showPassword}
             autoCapitalize="none"
+            right={
+              <Pressable
+                onPress={() => setShowPassword((value) => !value)}
+                hitSlop={8}
+                accessibilityLabel={
+                  showPassword ? "Hide password" : "Show password"
+                }
+              >
+                <Icon
+                  name={showPassword ? IconSet.EyeOff : IconSet.Eye}
+                  size={20}
+                  color={tokens.color.inkFaint}
+                />
+              </Pressable>
+            }
           />
+
+          <View style={styles.spacing} />
 
           <Button
             title="Sign in"
@@ -85,7 +122,7 @@ export function LoginScreen() {
         </View>
 
         <Text style={styles.footnote}>
-          Partner, Manager or BD account · secured & scoped per role
+          Partner, Manager or BD account · access is scoped per role
         </Text>
       </View>
     </Screen>
@@ -95,67 +132,100 @@ export function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: "center",
-    paddingTop: topInset,
+  },
+
+  hero: {
+    marginHorizontal: -20,
+    marginTop: -10,
+    paddingTop: 34,
+    paddingHorizontal: 24,
+    paddingBottom: 44,
+    backgroundColor: tokens.color.brand,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
 
   brandRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    marginBottom: 40,
   },
 
   mark: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: tokens.color.brandSoft,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.16)",
     alignItems: "center",
     justifyContent: "center",
   },
 
   wordmark: {
     ...tokens.type.h3,
-    color: tokens.color.ink,
+    color: tokens.color.onBrand,
+    fontWeight: "800",
   },
 
   wordmarkSub: {
     ...tokens.type.micro,
     textTransform: "uppercase",
     letterSpacing: 1.2,
-    color: tokens.color.inkFaint,
+    color: "rgba(255,255,255,0.72)",
     marginTop: 2,
   },
 
-  heading: {
-    marginBottom: 28,
+  heroHeading: {
+    marginTop: 36,
   },
 
-  title: {
+  heroTitle: {
     ...tokens.type.display,
-    color: tokens.color.ink,
+    color: tokens.color.onBrand,
+    fontWeight: "800",
   },
 
-  subtitle: {
+  heroSubtitle: {
     ...tokens.type.body,
-    color: tokens.color.inkMuted,
+    color: "rgba(255,255,255,0.86)",
     marginTop: 8,
+    maxWidth: 300,
+  },
+
+  heroStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 24,
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.14)",
+    borderRadius: tokens.radius.pill,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+
+  heroStripText: {
+    ...tokens.type.caption,
+    color: tokens.color.onBrand,
   },
 
   card: {
+    marginTop: -22,
     backgroundColor: tokens.color.surface,
     borderRadius: tokens.radius.lg,
     borderWidth: 1,
     borderColor: tokens.color.border,
     padding: 20,
-    ...tokens.shadow.card,
+    ...tokens.shadow.floated,
+  },
+
+  spacing: {
+    height: 16,
   },
 
   footnote: {
     ...tokens.type.caption,
     color: tokens.color.inkFaint,
     textAlign: "center",
-    marginTop: 24,
+    marginTop: 20,
   },
 });

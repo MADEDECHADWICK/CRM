@@ -15,9 +15,12 @@ import {
   ALLOWED_TRANSITIONS,
   createApiClient,
   formatAmount,
+  type DepartmentDetail,
   type Opportunity,
   type OpportunityDetail,
+  type Organization,
   type Stage,
+  type UserLite,
   STAGE_COLORS,
   STAGE_LABELS,
   tokens,
@@ -28,6 +31,7 @@ import {
   Badge,
   Button,
   Card,
+  Chip,
   EmptyState,
   Icon,
   IconButton,
@@ -37,7 +41,6 @@ import {
   SearchBar,
   Section,
   Segmented,
-  topInset,
 } from "@crm/ui";
 
 import { useAuth } from "../auth/AuthContext";
@@ -76,12 +79,14 @@ function normalizeRevisit(value: string): string | undefined {
 }
 
 export function OpportunitiesScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const isBD = user?.role === "MARKETING_BD";
 
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -175,6 +180,17 @@ export function OpportunitiesScreen() {
         <AppHeader
           title="Pipeline"
           subtitle="Every opportunity, end to end"
+          right={
+            isBD ? (
+              <IconButton
+                name={showAddForm ? IconSet.Close : IconSet.Add}
+                label={showAddForm ? "Close deal form" : "Add deal"}
+                color={tokens.color.brand}
+                bg={tokens.color.brandSoft}
+                onPress={() => setShowAddForm((open) => !open)}
+              />
+            ) : undefined
+          }
         />
 
         <Segmented
@@ -196,6 +212,16 @@ export function OpportunitiesScreen() {
             placeholder="Search deals, clients, services"
           />
         </View>
+
+        {showAddForm && token ? (
+          <AddDealForm
+            token={token}
+            onSaved={() => {
+              setShowAddForm(false);
+              load();
+            }}
+          />
+        ) : null}
 
         {filtered.length === 0 ? (
           <EmptyState
@@ -221,6 +247,233 @@ type PipelineCardProps = {
   opportunity: Opportunity;
   onPress: () => void;
 };
+
+type AddDealFormProps = {
+  token: string;
+  onSaved: () => void;
+};
+
+function AddDealForm({ token, onSaved }: AddDealFormProps) {
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [departments, setDepartments] = useState<DepartmentDetail[]>([]);
+  const [staff, setStaff] = useState<UserLite[]>([]);
+  const [loadingOptions, setLoadingOptions] = useState(true);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+
+  const [title, setTitle] = useState("");
+  const [service, setService] = useState("");
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("KES");
+  const [stage, setStage] = useState<"PROSPECT" | "LEAD">("LEAD");
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
+  const [departmentId, setDepartmentId] = useState<string | null>(null);
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const owners = useMemo(
+    () =>
+      staff.filter(
+        (member) =>
+          member.role === "PARTNER" || member.role === "MANAGER"
+      ),
+    [staff]
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    Promise.all([
+      apiFetch<Organization[]>("/organizations", token),
+      apiFetch<DepartmentDetail[]>("/departments", token),
+      apiFetch<UserLite[]>("/users", token),
+    ])
+      .then(([orgs, depts, users]) => {
+        if (!active) return;
+        setOrganizations(orgs);
+        setDepartments(depts);
+        setStaff(
+          users.filter(
+            (member) =>
+              member.role === "PARTNER" || member.role === "MANAGER"
+          )
+        );
+      })
+      .catch((error) => {
+        if (!active) return;
+        setOptionsError(
+          error instanceof Error ? error.message : "Unable to load options"
+        );
+      })
+      .finally(() => {
+        if (active) setLoadingOptions(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  async function submit() {
+    if (!title.trim() || !service.trim()) {
+      Alert.alert("Missing details", "Enter a deal title and the service offered.");
+      return;
+    }
+    if (!organizationId || !departmentId || !ownerId) {
+      Alert.alert(
+        "Missing details",
+        "Pick an organization, a department and an owner (Partner/Manager)."
+      );
+      return;
+    }
+
+    const parsedAmount = amount.trim() ? Number(amount) : null;
+    if (amount.trim() && (!Number.isFinite(parsedAmount) || parsedAmount! <= 0)) {
+      Alert.alert("Invalid amount", "Enter a positive number or leave it blank.");
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      await apiFetch("/opportunities", token, {
+        method: "POST",
+        body: JSON.stringify({
+          title: title.trim(),
+          service: service.trim(),
+          organizationId,
+          departmentId,
+          ownerId,
+          stage,
+          ...(parsedAmount != null ? { amount: parsedAmount } : {}),
+          ...(currency.trim() ? { currency: currency.trim() } : {}),
+        }),
+      });
+      onSaved();
+    } catch (error) {
+      Alert.alert(
+        "Unable to add deal",
+        error instanceof Error ? error.message : "Please try again."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Card style={styles.formCard}>
+      <Text style={styles.formCardTitle}>Add deal</Text>
+
+      {optionsError ? (
+        <Text style={styles.formError}>{optionsError}</Text>
+      ) : loadingOptions ? (
+        <ActivityIndicator color={tokens.color.brand} style={styles.formBusy} />
+      ) : (
+        <>
+          <TextFieldForm
+            label="Deal title"
+            value={title}
+            onChangeText={setTitle}
+            placeholder="e.g. Annual audit mandate"
+          />
+
+          <TextFieldForm
+            label="Service offered"
+            value={service}
+            onChangeText={setService}
+            placeholder="e.g. Tax advisory"
+          />
+
+          <Text style={styles.formLabel}>Stage</Text>
+          <View style={styles.stageSegmented}>
+            <Segmented<"PROSPECT" | "LEAD">
+              value={stage}
+              onChange={setStage}
+              options={[
+                { key: "LEAD", label: "Lead" },
+                { key: "PROSPECT", label: "Prospect" },
+              ]}
+            />
+          </View>
+
+          <Text style={styles.formLabel}>Organization</Text>
+          <View style={styles.chipWrap}>
+            {organizations.map((org) => (
+              <Chip
+                key={org.id}
+                label={org.name}
+                selected={organizationId === org.id}
+                onPress={() =>
+                  setOrganizationId((current) =>
+                    current === org.id ? null : org.id
+                  )
+                }
+              />
+            ))}
+          </View>
+
+          <Text style={styles.formLabel}>Department</Text>
+          <View style={styles.chipWrap}>
+            {departments.map((dept) => (
+              <Chip
+                key={dept.id}
+                label={dept.name}
+                selected={departmentId === dept.id}
+                onPress={() =>
+                  setDepartmentId((current) =>
+                    current === dept.id ? null : dept.id
+                  )
+                }
+              />
+            ))}
+          </View>
+
+          <Text style={styles.formLabel}>Owner (Partner/Manager)</Text>
+          <View style={styles.chipWrap}>
+            {owners.map((member) => (
+              <Chip
+                key={member.id}
+                label={member.name}
+                selected={ownerId === member.id}
+                onPress={() =>
+                  setOwnerId((current) =>
+                    current === member.id ? null : member.id
+                  )
+                }
+              />
+            ))}
+          </View>
+
+          <View style={styles.amountRow}>
+            <View style={styles.amountFlex}>
+              <TextFieldForm
+                label="Deal value (optional)"
+                value={amount}
+                onChangeText={setAmount}
+                placeholder="e.g. 750000"
+                keyboardType="numeric"
+              />
+            </View>
+            <View style={styles.amountFlex}>
+              <TextFieldForm
+                label="Currency"
+                value={currency}
+                onChangeText={setCurrency}
+                placeholder="KES"
+              />
+            </View>
+          </View>
+
+          <Button
+            title="Add deal"
+            onPress={submit}
+            loading={submitting}
+            disabled={submitting}
+            icon={IconSet.Add}
+          />
+        </>
+      )}
+    </Card>
+  );
+}
 
 function PipelineCard({ opportunity, onPress }: PipelineCardProps) {
   const stageColors = STAGE_COLORS[opportunity.stage];
@@ -276,7 +529,8 @@ type PipelineDetailProps = {
 };
 
 function PipelineDetail({ id, onClose }: PipelineDetailProps) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const isBD = user?.role === "MARKETING_BD";
 
   const [detail, setDetail] = useState<OpportunityDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -292,6 +546,78 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
   // Note form
   const [noteBody, setNoteBody] = useState("");
   const [noteBusy, setNoteBusy] = useState(false);
+
+  // Reassign owner form (BD only)
+  const [owners, setOwners] = useState<UserLite[]>([]);
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [newOwnerId, setNewOwnerId] = useState<string | null>(null);
+  const [reassignNote, setReassignNote] = useState("");
+  const [reassignBusy, setReassignBusy] = useState(false);
+  const [reassignLoading, setReassignLoading] = useState(false);
+
+  const openReassign = useCallback(async () => {
+    if (!token || reassignOpen) return;
+
+    setReassignOpen(true);
+    setReassignLoading(true);
+    try {
+      const users = await apiFetch<UserLite[]>("/users", token);
+      setOwners(
+        users.filter(
+          (member) =>
+            member.role === "PARTNER" || member.role === "MANAGER"
+        )
+      );
+      setNewOwnerId(
+        detail?.owner?.id ??
+          users.find(
+            (member) =>
+              member.role === "PARTNER" || member.role === "MANAGER"
+          )?.id ??
+          null
+      );
+    } catch (error) {
+      Alert.alert(
+        "Unable to load owners",
+        error instanceof Error ? error.message : "Please try again."
+      );
+    } finally {
+      setReassignLoading(false);
+    }
+  }, [token, reassignOpen, detail?.owner?.id]);
+
+  async function submitReassign() {
+    if (!token || !detail || !newOwnerId) return;
+
+    if (newOwnerId === detail.owner?.id) return;
+
+    if (!reassignNote.trim()) {
+      Alert.alert("Note required", "Explain why you're moving this deal.");
+      return;
+    }
+
+    try {
+      setReassignBusy(true);
+      await apiFetch(`/opportunities/${detail.id}/reassign`, token, {
+        method: "POST",
+        body: JSON.stringify({
+          newOwnerId,
+          note: reassignNote.trim(),
+        }),
+      });
+      setReassignOpen(false);
+      setNewOwnerId(null);
+      setReassignNote("");
+      await loadDetail();
+    } catch (error) {
+      Alert.alert(
+        "Unable to reassign",
+        error instanceof Error ? error.message : "Please try again."
+      );
+    } finally {
+      setReassignBusy(false);
+    }
+  }
 
   const loadDetail = useCallback(async () => {
     if (!token) return;
@@ -421,9 +747,7 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
       <ScrollView
         contentContainerStyle={styles.detailContent}
       >
-        <View
-          style={[styles.detailTopBar, { paddingTop: topInset }]}
-        >
+        <View style={styles.detailTopBar}>
           <IconButton
             name={IconSet.Back}
             label="Back to pipeline"
@@ -510,6 +834,84 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
             />
           ) : null}
         </Card>
+
+        {isBD ? (
+          <>
+            <Section
+              title="Owner"
+              action={
+                reassignOpen ? (
+                  <Pressable
+                    onPress={() => {
+                      setReassignOpen(false);
+                      setNewOwnerId(null);
+                      setReassignNote("");
+                    }}
+                  >
+                    <Text style={styles.cancelText}>Cancel</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    onPress={() => {
+                      if (!reassignOpen) openReassign();
+                    }}
+                    hitSlop={8}
+                  >
+                    <Text style={styles.cancelText}>Reassign</Text>
+                  </Pressable>
+                )
+              }
+            />
+
+            {reassignOpen ? (
+              <Card>
+                {reassignLoading ? (
+                  <ActivityIndicator
+                    color={tokens.color.brand}
+                    style={styles.reassignBusy}
+                  />
+                ) : (
+                  <>
+                    <Text style={styles.formLabel}>
+                      New owner (Partner/Manager)
+                    </Text>
+                    <View style={styles.chipWrap}>
+                      {owners.map((member) => (
+                        <Chip
+                          key={member.id}
+                          label={member.name}
+                          selected={newOwnerId === member.id}
+                          onPress={() => setNewOwnerId(member.id)}
+                        />
+                      ))}
+                    </View>
+
+                    <View style={styles.reassignNote}>
+                      <TextFieldForm
+                        label="Why this deal is moving"
+                        value={reassignNote}
+                        onChangeText={setReassignNote}
+                        placeholder="e.g. Handed off to the tax team"
+                      />
+                    </View>
+
+                    <Button
+                      title="Transfer ownership"
+                      onPress={submitReassign}
+                      loading={reassignBusy}
+                      disabled={
+                        reassignBusy ||
+                        !newOwnerId ||
+                        newOwnerId === detail.owner?.id
+                      }
+                      icon={IconSet.Check}
+                    />
+                  </>
+                )}
+              </Card>
+            ) : null}
+          </>
+        ) : null}
 
         {transitions.length > 0 ? (
           <>
@@ -1055,5 +1457,55 @@ const styles = StyleSheet.create({
     ...tokens.type.micro,
     letterSpacing: 0,
     color: tokens.color.inkFaint,
+  },
+
+  formCard: {
+    padding: 16,
+    marginBottom: 16,
+  },
+
+  formCardTitle: {
+    ...tokens.type.h3,
+    color: tokens.color.ink,
+    marginBottom: 14,
+  },
+
+  formError: {
+    ...tokens.type.caption,
+    color: tokens.color.danger,
+  },
+
+  formBusy: {
+    alignSelf: "center",
+    marginVertical: 18,
+  },
+
+  stageSegmented: {
+    marginBottom: 16,
+  },
+
+  chipWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 16,
+  },
+
+  amountRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+
+  amountFlex: {
+    flex: 1,
+  },
+
+  reassignBusy: {
+    alignSelf: "center",
+    marginVertical: 18,
+  },
+
+  reassignNote: {
+    marginTop: 4,
   },
 });

@@ -47,6 +47,8 @@ export const IconSet = {
   Clock: "time-outline",
   Calendar: "calendar-outline",
   Logout: "log-out-outline",
+  Eye: "eye-outline",
+  EyeOff: "eye-off-outline",
   Options: "options-outline",
   Building: "business-outline",
   Pin: "pin-outline",

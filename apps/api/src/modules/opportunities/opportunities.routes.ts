@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth, AuthedRequest, opportunityScope } from "../../middleware/authorize";
 import { transitionOpportunity } from "./transitionOpportunity";
+import { REPORT_PERIODS, reportPeriodRange, customReportRange } from "@crm/core";
 
 export const opportunitiesRouter = Router();
 opportunitiesRouter.use(requireAuth);
@@ -14,6 +15,11 @@ const listQuerySchema = z.object({
     .enum(["PROSPECT", "LEAD", "PROPOSAL", "WON", "LOST", "NO_REPLY", "DEFERRED"])
     .optional(),
   q: z.string().optional(),
+  period: z.enum(REPORT_PERIODS).optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  ownerId: z.string().uuid().optional(),
+  departmentId: z.string().uuid().optional(),
 });
 
 const transitionBodySchema = z.object({
@@ -32,6 +38,7 @@ const createBodySchema = z.object({
   amount: z.number().positive().optional(),
   currency: z.string().optional(),
   ownerId: z.string().uuid().optional(),
+  stage: z.enum(["PROSPECT", "LEAD"]).optional(),
 });
 
 const reassignBodySchema = z.object({
@@ -51,12 +58,36 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
     });
   }
 
-  const { stage, q } = query.data;
+  const { stage, q, period, from, to, ownerId, departmentId } = query.data;
+  let range: { from: Date; to: Date } | null = null;
+  if (period === "custom") {
+    const resolved = customReportRange(from, to);
+    if ("error" in resolved) {
+      return res.status(400).json({
+        success: false,
+        error: { code: "VALIDATION_ERROR", message: resolved.error },
+      });
+    }
+    range = resolved.range;
+  } else if (period) {
+    range = reportPeriodRange(period);
+  }
+
+  // A Manager's scope is "their own deals" — an explicit ownerId filter is
+  // honored only for roles that can see everything, so a Manager can't lift
+  // their blindfold; departmentId narrows within whatever scope applies.
+  const canFilterOwner = req.user!.role !== "MANAGER";
+
   const opps = await prisma.opportunity.findMany({
     where: {
       ...opportunityScope(req.user),
       ...(stage ? { stage } : {}),
+      ...(range
+        ? { stageEnteredAt: { gte: range.from, lte: range.to } }
+        : {}),
       ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),
+      ...(ownerId && canFilterOwner ? { ownerId } : {}),
+      ...(departmentId ? { departmentId } : {}),
     },
     include: { organization: true, department: true, owner: { select: { id: true, name: true } } },
     orderBy: { stageEnteredAt: "desc" },
@@ -105,7 +136,9 @@ opportunitiesRouter.get("/:id", async (req: AuthedRequest, res) => {
 });
 
 // Create a Lead against an existing organization + department — BR-003
-// makes the service being offered mandatory at creation.
+// makes the service being offered mandatory at creation. BD can also raise
+// a deal straight into PROSPECT (an identified, not-yet-qualified org) and
+// assign it to a Partner/Manager owner immediately.
 opportunitiesRouter.post("/", async (req: AuthedRequest, res) => {
   const parsed = createBodySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -115,13 +148,31 @@ opportunitiesRouter.post("/", async (req: AuthedRequest, res) => {
     });
   }
 
+  // Ownership is real: a deal must belong to a Partner or Manager (a
+  // reporting scope that can actually own opportunities), never a BD user.
+  if (parsed.data.ownerId) {
+    const owner = await prisma.user.findUnique({
+      where: { id: parsed.data.ownerId },
+      select: { role: true },
+    });
+    if (owner?.role !== "PARTNER" && owner?.role !== "MANAGER") {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "INVALID_OWNER",
+          message: "Owner must be a Partner or Manager.",
+        },
+      });
+    }
+  }
+
   const opp = await prisma.opportunity.create({
     data: {
       title: parsed.data.title,
       organizationId: parsed.data.organizationId,
       departmentId: parsed.data.departmentId,
       service: parsed.data.service,
-      stage: "LEAD",
+      stage: parsed.data.stage ?? "LEAD",
       amount: parsed.data.amount ?? null,
       currency: parsed.data.currency ?? "KES",
       createdById: req.user!.id,

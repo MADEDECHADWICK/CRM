@@ -1,3 +1,5 @@
+import type { ReportPeriod } from "./reporting";
+
 export type Role = "MARKETING_BD" | "PARTNER" | "MANAGER";
 
 export type Stage =
@@ -79,6 +81,59 @@ export type ReportingSummary = {
   wonCount?: number;
   lostValue: number;
   lostCount?: number;
+  period?: ReportPeriod;
+  periodFrom?: string | null;
+  periodTo?: string | null;
+};
+
+// Users surfaced by GET /users — never passwordHash. Partner and Manager
+// rows are the "staff" a Marketing/BD admin manages; the BD user appears
+// too so the same list can feed owner pickers and admin views.
+export type UserLite = {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  departmentId?: string | null;
+  department?: Department | null;
+};
+
+// Staff records via POST/PATCH /users — only Partner and Manager roles can
+// be created today (a BD user is created by the seed, not the staff form).
+export type StaffUser = UserLite & {
+  role: "PARTNER" | "MANAGER";
+};
+
+// GET /departments — name plus live member count for the Team screen.
+export type DepartmentDetail = Department & {
+  memberCount: number;
+};
+
+// One row of the breakdown report: a staff member or department plus its
+// pipeline counts and financial rollups for the chosen period. Zeros are
+// always present so every member/department shows up even with no activity
+// in the window.
+export type StageCounts = Record<Stage, number>;
+
+export type BreakdownRow = {
+  id: string;
+  name: string;
+  subtitle?: string | null;
+  counts: StageCounts;
+  wonValue: number;
+  wonCount: number;
+  lostValue: number;
+  lostCount: number;
+  activeProposalValue: number;
+};
+
+export type ReportingBreakdown = {
+  dimension: "owner" | "department";
+  period: ReportPeriod;
+  periodFrom?: string | null;
+  periodTo?: string | null;
+  rows: BreakdownRow[];
+  totals: Omit<BreakdownRow, "id" | "name" | "subtitle">;
 };
 
 // The richer shapes returned by GET /opportunities/:id — the note and

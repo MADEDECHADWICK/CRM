@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -10,6 +11,8 @@ import {
   TextInput,
   View,
 } from "react-native";
+
+import DateTimePicker from "@react-native-community/datetimepicker";
 
 import {
   createApiClient,
@@ -85,12 +88,19 @@ const TYPE_ICONS: Record<FollowupType, (typeof IconSet)[keyof typeof IconSet]> =
   MEETING: IconSet.Calendar,
 };
 
-function normalizeDueAt(value: string): string {
-  const trimmed = value.trim();
-  const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
-  return dateOnly.test(trimmed)
-    ? `${trimmed}T12:00:00.000Z`
-    : trimmed;
+function noonUtc(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}T12:00:00.000Z`;
+}
+
+function fmtDateOnly(date: Date): string {
+  return date.toLocaleDateString("en-KE", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function fmtDue(iso: string): string {
@@ -116,7 +126,8 @@ export function FollowupsScreen() {
   const [showCreate, setShowCreate] = useState(false);
   const [note, setNote] = useState("");
   const [type, setType] = useState<FollowupType>("CALL");
-  const [dueAt, setDueAt] = useState("");
+  const [dueDate, setDueDate] = useState<Date | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [orgs, setOrgs] = useState<OrgOption[]>([]);
   const [orgLoading, setOrgLoading] = useState(true);
   const [selectedOrg, setSelectedOrg] = useState<OrgOption | null>(null);
@@ -162,7 +173,7 @@ export function FollowupsScreen() {
   async function createFollowup() {
     if (!token) return;
 
-    if (!note.trim() || !dueAt.trim()) {
+    if (!note.trim() || !dueDate) {
       Alert.alert("Missing details", "A note and a due date are required.");
       return;
     }
@@ -175,14 +186,15 @@ export function FollowupsScreen() {
         body: JSON.stringify({
           note: note.trim(),
           type,
-          dueAt: normalizeDueAt(dueAt),
+          dueAt: noonUtc(dueDate),
           organizationId: selectedOrg?.id,
         }),
       });
 
       setNote("");
       setType("CALL");
-      setDueAt("");
+      setDueDate(null);
+      setPickerOpen(false);
       setSelectedOrg(null);
       setOrgPickerOpen(false);
       setOrgQuery("");
@@ -318,12 +330,54 @@ export function FollowupsScreen() {
                 placeholder="e.g. Call the partner about the proposal"
               />
 
-              <TextField
-                label="Due date"
-                value={dueAt}
-                onChangeText={setDueAt}
-                placeholder="2026-09-30"
-              />
+              <Text style={styles.fieldLabel}>Due date</Text>
+
+              <Pressable
+                onPress={() => setPickerOpen((value) => !value)}
+                style={styles.dateField}
+              >
+                {dueDate ? (
+                  <Text style={styles.dateValue}>
+                    {fmtDateOnly(dueDate)}
+                  </Text>
+                ) : (
+                  <Text style={styles.datePlaceholder}>
+                    Choose a date…
+                  </Text>
+                )}
+
+                <Icon
+                  name={IconSet.Calendar}
+                  size={18}
+                  color={tokens.color.inkFaint}
+                />
+              </Pressable>
+
+              {pickerOpen ? (
+                <View style={styles.datePickerWrap}>
+                  {Platform.OS === "ios" ? (
+                    <Pressable
+                      onPress={() => setPickerOpen(false)}
+                      style={styles.dateDoneRow}
+                      hitSlop={8}
+                    >
+                      <Text style={styles.dateDoneText}>Done</Text>
+                    </Pressable>
+                  ) : null}
+
+                  <DateTimePicker
+                    value={dueDate ?? new Date()}
+                    mode="date"
+                    display={
+                      Platform.OS === "ios" ? "spinner" : "default"
+                    }
+                    onValueChange={(_event, date) => {
+                      if (date) setDueDate(date);
+                    }}
+                    onDismiss={() => setPickerOpen(false)}
+                  />
+                </View>
+              ) : null}
 
               <View style={styles.field}>
                 <View style={styles.fieldLabelRow}>
@@ -625,6 +679,51 @@ const styles = StyleSheet.create({
   clearText: {
     ...tokens.type.caption,
     fontWeight: "600",
+    color: tokens.color.brand,
+  },
+
+  dateField: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    minHeight: 46,
+    backgroundColor: tokens.color.surfacePressed,
+    borderRadius: tokens.radius.sm,
+    borderWidth: 1,
+    borderColor: tokens.color.border,
+    paddingHorizontal: 14,
+    marginBottom: 10,
+  },
+
+  dateValue: {
+    ...tokens.type.body,
+    color: tokens.color.ink,
+  },
+
+  datePlaceholder: {
+    ...tokens.type.body,
+    color: tokens.color.inkFaint,
+  },
+
+  datePickerWrap: {
+    marginBottom: 16,
+    borderRadius: tokens.radius.md,
+    borderWidth: 1,
+    borderColor: tokens.color.border,
+    backgroundColor: tokens.color.surface,
+    padding: 12,
+    ...tokens.shadow.hairline,
+  },
+
+  dateDoneRow: {
+    alignSelf: "flex-end",
+    marginBottom: 6,
+  },
+
+  dateDoneText: {
+    ...tokens.type.caption,
+    fontWeight: "700",
     color: tokens.color.brand,
   },
 

@@ -6,6 +6,7 @@
     "@crm/core": "workspace:*",
     "@crm/ui": "workspace:*",
     "@expo/vector-icons": "^15.1.1",
+    "@react-native-community/datetimepicker": "9.1.0",
     "@shopify/react-native-skia": "2.6.2",
     "expo": "~57.0.21",
     "expo-status-bar": "~57.0.1",

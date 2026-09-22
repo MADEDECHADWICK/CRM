@@ -17,6 +17,8 @@ import {
 
 import { tokens } from "@crm/core";
 
+import { topInset } from "./util";
+
 type ScreenProps = {
   children: ReactNode;
   scroll?: boolean;
@@ -73,6 +75,7 @@ const styles = StyleSheet.create({
 
   padded: {
     flex: 1,
+    paddingTop: topInset + 10,
     paddingHorizontal: 20,
     paddingBottom: 32,
   },

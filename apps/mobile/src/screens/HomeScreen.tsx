@@ -18,13 +18,13 @@ import {
 } from "@crm/core";
 
 import {
-  AppHeader,
   Badge,
   Card,
   EmptyState,
   Icon,
   IconButton,
   IconSet,
+  PageHero,
   Screen,
   Section,
   StatCard,
@@ -132,22 +132,27 @@ export function HomeScreen() {
           />
         }
       >
-        <AppHeader
+        <PageHero
+          icon={IconSet.Check}
+          iconColor={tokens.color.onBrand}
+          tint={tokens.color.brand}
           title={`${greetingForHour(new Date().getHours())}, ${firstName}.`}
           subtitle={today}
           right={
             <View style={styles.headerActions}>
-              <IconButton
-                name={IconSet.Logout}
-                label="Sign out"
-                onPress={confirmSignOut}
-              />
-
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>
                   {initials(user?.name ?? "")}
                 </Text>
               </View>
+
+              <IconButton
+                name={IconSet.Logout}
+                label="Sign out"
+                onPress={confirmSignOut}
+                color={tokens.color.danger}
+                bg={tokens.color.dangerSoft}
+              />
             </View>
           }
         />
@@ -270,21 +275,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
   avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: tokens.color.brandSoft,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: tokens.color.border,
-  },
-
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
   },
 
   avatarText: {

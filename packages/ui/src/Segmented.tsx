@@ -2,8 +2,17 @@
 //
 // A pill-style segmented control for filtering toggle groups (Lead /
 // Proposal, Pending / Done, etc.). Generic over the option key type.
+// With a few options the pills stretch evenly across one row; with many
+// options the bar becomes a single-line horizontally scrollable strip so
+// the pills never wrap into a ragged second line.
 
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { tokens } from "@crm/core";
 
@@ -24,71 +33,84 @@ export function Segmented<T extends string>({
   value,
   onChange,
 }: SegmentedProps<T>) {
-  return (
-    <View style={styles.wrap}>
-      {options.map((option) => {
-        const active = option.key === value;
+  const many = options.length > 3;
 
-        return (
-          <Pressable
-            key={option.key}
-            onPress={() => onChange(option.key)}
-            style={({ pressed }) => [
-              styles.item,
-              {
-                flexBasis:
-                  options.length > 3 ? "30%" : 0,
-              },
-              active && styles.itemActive,
-              pressed && !active && styles.itemPressed,
+  const control = options.map((option) => {
+    const active = option.key === value;
+
+    return (
+      <Pressable
+        key={option.key}
+        onPress={() => onChange(option.key)}
+        style={({ pressed }) => [
+          styles.item,
+          many ? styles.itemSnug : styles.itemGrow,
+          active && styles.itemActive,
+          pressed && !active && styles.itemPressed,
+        ]}
+      >
+        <Text
+          style={[
+            styles.label,
+            active && styles.labelActive,
+          ]}
+        >
+          {option.label}
+        </Text>
+
+        {option.count != null ? (
+          <View
+            style={[
+              styles.count,
+              active && styles.countActive,
             ]}
           >
             <Text
               style={[
-                styles.label,
-                active && styles.labelActive,
+                styles.countText,
+                active && styles.countTextActive,
               ]}
             >
-              {option.label}
+              {option.count}
             </Text>
+          </View>
+        ) : null}
+      </Pressable>
+    );
+  });
 
-            {option.count != null ? (
-              <View
-                style={[
-                  styles.count,
-                  active && styles.countActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.countText,
-                    active && styles.countTextActive,
-                  ]}
-                >
-                  {option.count}
-                </Text>
-              </View>
-            ) : null}
-          </Pressable>
-        );
-      })}
+  return many ? (
+    <View style={styles.wrap}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
+        {control}
+      </ScrollView>
     </View>
+  ) : (
+    <View style={styles.wrap}>{control}</View>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: {
     flexDirection: "row",
-    flexWrap: "wrap",
     backgroundColor: tokens.color.surfaceMuted,
     borderRadius: tokens.radius.sm,
     padding: 4,
     gap: 4,
+    overflow: "hidden",
+  },
+
+  scrollContent: {
+    flexDirection: "row",
+    gap: 4,
+    paddingRight: 4,
   },
 
   item: {
-    flexGrow: 1,
-    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -96,6 +118,16 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     paddingHorizontal: 8,
     borderRadius: 8,
+  },
+
+  itemGrow: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+  },
+
+  itemSnug: {
+    flexShrink: 0,
   },
 
   itemActive: {

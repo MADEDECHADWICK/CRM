@@ -12,39 +12,52 @@ import { ProspectsScreen } from "../screens/ProspectsScreen";
 import { OpportunitiesScreen } from "../screens/OpportunitiesScreen";
 import { FollowupsScreen } from "../screens/FollowupsScreen";
 import { ReportsScreen } from "../screens/ReportsScreen";
+import { TeamScreen } from "../screens/TeamScreen";
 
 type ScreenName =
   | "HOME"
   | "PROSPECTS"
   | "PIPELINE"
   | "FOLLOWUPS"
-  | "REPORTS";
+  | "REPORTS"
+  | "TEAM";
 
-const SCREENS: {
-  key: ScreenName;
-  label: string;
-  icon: (typeof IconSet)[keyof typeof IconSet];
-}[] = [
-  { key: "HOME", label: "Home", icon: IconSet.Home },
-  { key: "PROSPECTS", label: "Prospects", icon: IconSet.People },
-  { key: "PIPELINE", label: "Pipeline", icon: IconSet.Pipeline },
-  { key: "FOLLOWUPS", label: "Follow-ups", icon: IconSet.Bell },
-  { key: "REPORTS", label: "Reports", icon: IconSet.Chart },
-];
+function buildScreens(user: {
+  role: string;
+} | null) {
+  return [
+    { key: "HOME" as const, label: "Home", icon: IconSet.Home },
+    { key: "PROSPECTS" as const, label: "Prospects", icon: IconSet.People },
+    { key: "PIPELINE" as const, label: "Pipeline", icon: IconSet.Pipeline },
+    { key: "FOLLOWUPS" as const, label: "Follow-ups", icon: IconSet.Bell },
+    { key: "REPORTS" as const, label: "Reports", icon: IconSet.Chart },
+    ...(user?.role === "MARKETING_BD"
+      ? [{ key: "TEAM" as const, label: "Team", icon: IconSet.Building }]
+      : []),
+  ];
+}
 
 export function AppNavigator() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
 
   const [screen, setScreen] =
     useState<ScreenName>("HOME");
+
+  const screens = buildScreens(user);
 
   if (!isAuthenticated) {
     return <LoginScreen />;
   }
 
+  // If the current screen vanished (e.g. a non-BD user landed on TEAM),
+  // fall back to Home instead of rendering a dead tab.
+  const activeScreen = screens.some((item) => item.key === screen)
+    ? screen
+    : "HOME";
+
   let content;
 
-  switch (screen) {
+  switch (activeScreen) {
     case "HOME":
       content = <HomeScreen />;
       break;
@@ -64,6 +77,10 @@ export function AppNavigator() {
     case "REPORTS":
       content = <ReportsScreen />;
       break;
+
+    case "TEAM":
+      content = <TeamScreen />;
+      break;
   }
 
   return (
@@ -71,8 +88,8 @@ export function AppNavigator() {
       <View style={styles.content}>{content}</View>
 
       <View style={styles.navigation}>
-        {SCREENS.map((item) => {
-          const active = screen === item.key;
+        {screens.map((item) => {
+          const active = activeScreen === item.key;
 
           return (
             <Pressable
