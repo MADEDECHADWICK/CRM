@@ -1,6 +1,7 @@
 -- CreateEnum
 CREATE TYPE "Role" AS ENUM ('MARKETING_BD', 'PARTNER', 'MANAGER');
 
+
 -- CreateEnum
 CREATE TYPE "Stage" AS ENUM ('PROSPECT', 'LEAD', 'PROPOSAL', 'WON', 'LOST', 'NO_REPLY', 'DEFERRED');
 

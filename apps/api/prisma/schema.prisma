@@ -39,8 +39,13 @@ enum Stage {
   /// An active business opportunity that is being pursued.
   LEAD
 
-  /// A formal proposal has been prepared or submitted.
+  /// A formal proposal has been prepared.
   PROPOSAL
+
+  /// The proposal has been sent to the client and is awaiting their
+  /// feedback. Distinct from NO_REPLY: the client still has a normal
+  /// window in which to respond, so this is not yet an outcome.
+  AWAITING_FEEDBACK
 
   /// The opportunity was successfully converted into business.
   WON
@@ -103,14 +108,14 @@ model User {
 
   /// Reference to the user's primary department.
 
-  department Department? @relation("DepartmentUsers",fields: [departmentId],references: [id])
+  department          Department?         @relation("DepartmentUsers", fields: [departmentId], references: [id])
   /// Opportunities created by this user.
-  createdOpprtunites Opportunity[] @relation("OpportunityCreatedBy")
+  createdOpprtunites  Opportunity[]       @relation("OpportunityCreatedBy")
   /// Opportunities currently owned or managed by this user.
   ///
   /// Ownership is separate from creation because an opportunity
   /// may be transferred between users.
-  ownerOpportunities Opportunity[] @relation("OpportunityOwner")
+  ownerOpportunities  Opportunity[]       @relation("OpportunityOwner")
   /// Stage changes performed by this user.
   stageHistoryEntries StageHistoryEntry[]
 
@@ -120,9 +125,9 @@ model User {
   /// Follow-ups assigned to this user.
   assignedFollowups Followup[] @relation("FollowupAssignedTo")
   /// Follow-ups created by this user.
-  createdFollowups Followup [] @relation("FollowupCreatedBy")
+  createdFollowups  Followup[] @relation("FollowupCreatedBy")
   /// Timestamp recording when the user was created.
-  createdAt DateTime @default(now())
+  createdAt         DateTime   @default(now())
 
   /// Automatically updated whenever the user record changes.
   updatedAt DateTime @updatedAt
@@ -222,6 +227,13 @@ model Organization {
   /// Follow-ups optionally linked to this organization.
   followups Followup[]
 
+  /// Named people who work at this organization.
+  ///
+  /// Organization.email / phone hold the generic switchboard details, so a
+  /// Contact is the named person you actually email or call — the thing a
+  /// BD needs before a site visit.
+  contacts Contact[]
+
   /// Timestamp recording when the organization was added.
   createdAt DateTime @default(now())
 
@@ -230,9 +242,72 @@ model Organization {
 
   /// Index supports faster organization searches.
   @@index([name])
-
   /// Index supports industry-based filtering and reporting.
   @@index([industry])
+}
+
+/// Represents a named contact person at a client organization.
+///
+/// This is deliberately separate from Organization.email / phone, which hold
+/// the generic company details. A Contact is the individual person — their
+/// name, role, and direct reachability — so outreach can be directed at a
+/// specific decision maker rather than a switchboard.
+model Contact {
+  /// Primary UUID identifier.
+  id String @id @default(uuid())
+
+  /// The contact person's full name.
+  ///
+  /// Example:
+  ///
+  /// "Jane Mwangi"
+  name String
+
+  /// Optional job title or role at the organization.
+  ///
+  /// Example:
+  ///
+  /// "Head of Finance"
+  title String?
+
+  /// Optional department the person sits in.
+  ///
+  /// Free text rather than a Department relation because this describes the
+  /// client's internal structure, not ours.
+  department String?
+
+  /// The person's email address.
+  email String?
+
+  /// The person's phone number.
+  phone String?
+
+  /// Marks the main point of contact for the organization.
+  ///
+  /// At most one contact per organization should be primary, but the flag is
+  /// kept as a plain boolean so the constraint is enforced in the API layer
+  /// where the rest of the validation lives.
+  isPrimary Boolean @default(false)
+
+  /// Optional free-text notes about this person.
+  notes String?
+
+  /// Organization this person belongs to.
+  organizationId String
+
+  /// Relationship to the organization employing this contact.
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Timestamp recording when the contact was added.
+  createdAt DateTime @default(now())
+
+  /// Automatically updated whenever the contact record changes.
+  updatedAt DateTime @updatedAt
+
+  /// Supports loading all contacts for an organization in one query.
+  @@index([organizationId])
+  /// Supports surfacing primary contacts across organizations.
+  @@index([isPrimary])
 }
 
 /// Represents a specific business opportunity.
@@ -328,7 +403,7 @@ model Opportunity {
   organizationId String
 
   /// The organization involved in this opportunity.
-  organization Organization @relation(fields: [organizationId],references: [id], onDelete: Restrict)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   /// Reference to the internal department handling this opportunity.
   ///
   /// Department belongs to the Opportunity rather than Organization
@@ -336,20 +411,20 @@ model Opportunity {
   departmentId String
 
   /// Internal department responsible for pursuing the opportunity.
-  department Department @relation(fields: [departmentId],references: [id],onDelete: Restrict)
+  department  Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
   /// User who originally created the opportunity.
   createdById String
 
   /// Relationship to the user who created the opportunity.
-  createdBy User @relation("OpportunityCreatedBy", fields: [createdById],references: [id], onDelete: Restrict)
+  createdBy User    @relation("OpportunityCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   /// User currently responsible for managing the opportunity.
   ///
   /// Ownership is separate from createdBy because responsibility
   /// can change during the opportunity lifecycle.
-  ownerId String?
+  ownerId   String?
 
   /// Current opportunity owner.
-  owner User? @relation("OpportunityOwner",fields: [ownerId],references: [id], onDelete: SetNull)
+  owner        User?               @relation("OpportunityOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   /// Complete record of every stage transition.
   stageHistory StageHistoryEntry[]
 
@@ -378,19 +453,14 @@ model Opportunity {
 
   /// Supports filtering opportunities by organization.
   @@index([organizationId])
-
   /// Supports department-specific pipeline queries.
   @@index([departmentId])
-
   /// Supports filtering by current owner.
   @@index([ownerId])
-
   /// Supports pipeline queries by stage.
   @@index([stage])
-
   /// Useful for common dashboard queries.
   @@index([departmentId, stage])
-
   /// Useful for organization-specific opportunity views.
   @@index([organizationId, stage])
 }
@@ -443,7 +513,6 @@ model StageHistoryEntry {
 
   /// Supports retrieving an opportunity's timeline in order.
   @@index([opportunityId, changedAt])
-
   /// Supports audit queries by user.
   @@index([changedById])
 }
@@ -471,17 +540,17 @@ model Note {
   opportunityId String?
 
   /// Relationship to the relevant opportunity, if any.
-  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  opportunity    Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   /// Organization this note belongs to (optional).
   organizationId String?
 
   /// Relationship to the relevant organization, if any.
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   /// User who created the note.
-  authorId String
+  authorId     String
 
   /// Relationship to the note author.
-  author User @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Restrict)
   /// Timestamp recording when the note was created.
   createdAt DateTime @default(now())
 
@@ -490,10 +559,8 @@ model Note {
 
   /// Supports loading notes for an opportunity chronologically.
   @@index([opportunityId, createdAt])
-
   /// Supports loading notes for an organization chronologically.
   @@index([organizationId, createdAt])
-
   /// Supports user activity queries.
   @@index([authorId])
 }
@@ -523,7 +590,7 @@ model Followup {
   /// BR-011 keeps both links optional — a reminder with no CRM context
   /// at all is still a valid, personal follow-up.
   organizationId String?
-  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   /// Current completion state.
   status FollowupStatus @default(PENDING)
@@ -540,17 +607,17 @@ model Followup {
   opportunityId String?
 
   /// Relationship to the relevant opportunity.
-  opportunity Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  opportunity  Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   /// User responsible for completing the follow-up.
   assignedToId String?
 
   /// Relationship to the assigned user.
-  assignedTo User? @relation("FollowupAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+  assignedTo  User?  @relation("FollowupAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
   /// User who originally created the follow-up.
   createdById String
 
   /// Relationship to the user who created it.
-  createdBy User @relation("FollowupCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdBy User     @relation("FollowupCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   /// Timestamp recording when the follow-up was created.
   createdAt DateTime @default(now())
 
@@ -559,16 +626,12 @@ model Followup {
 
   /// Supports dashboard queries for pending follow-ups.
   @@index([status])
-
   /// Supports queries for upcoming and overdue follow-ups.
   @@index([dueAt])
-
   /// Supports user-specific task views.
   @@index([assignedToId])
-
   /// Supports loading follow-ups within an opportunity.
   @@index([opportunityId, dueAt])
-
   /// Supports loading follow-ups within an organization.
   @@index([organizationId, dueAt])
 }

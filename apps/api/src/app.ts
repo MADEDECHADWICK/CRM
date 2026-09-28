@@ -8,6 +8,7 @@ import { reportingRouter } from "./modules/reporting/reporting.routes";
 import { notesRouter } from "./modules/notes/notes.routes";
 import { usersRouter } from "./modules/users/users.routes";
 import { departmentsRouter } from "./modules/departments/departments.routes";
+import { contactsRouter } from "./modules/contacts/contacts.routes";
 
 const app = express();
 
@@ -29,6 +30,7 @@ app.use("/followups", followupsRouter);
 app.use("/notes", notesRouter);
 app.use("/users", usersRouter);
 app.use("/departments", departmentsRouter);
+app.use("/contacts", contactsRouter);
 
 const port = Number(process.env.API_PORT || 4000);
 

@@ -368,11 +368,18 @@ export function FollowupsScreen() {
                   <DateTimePicker
                     value={dueDate ?? new Date()}
                     mode="date"
-                    display={
-                      Platform.OS === "ios" ? "spinner" : "default"
-                    }
+                    // "compact" renders a tappable calendar grid on iOS
+                    // instead of a wheel. That matters for auto-close: a
+                    // spinner's onValueChange fires continuously while
+                    // scrolling, so closing on it would dismiss the picker
+                    // the instant the user starts flicking. A grid only
+                    // reports once, on an actual tap.
+                    display={Platform.OS === "ios" ? "compact" : "default"}
                     onValueChange={(_event, date) => {
                       if (date) setDueDate(date);
+                      // Collapse as soon as a date is chosen — same as the
+                      // native Android dialog dismissing itself.
+                      setPickerOpen(false);
                     }}
                     onDismiss={() => setPickerOpen(false)}
                   />

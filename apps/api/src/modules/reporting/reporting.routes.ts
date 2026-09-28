@@ -10,6 +10,8 @@ import {
   REPORT_PERIODS,
   reportPeriodRange,
   customReportRange,
+  ACTIVE_PROPOSAL_STAGES,
+  STAGES,
   type Stage,
   type StageCounts,
   type BreakdownRow,
@@ -90,7 +92,7 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
       stage,
     });
 
-    const [prospects, leads, proposals, clients, won, lost, activeProposals] =
+    const [prospects, leads, proposals, awaitingFeedback, clients, won, lost, activeProposals] =
       await Promise.all([
         prisma.opportunity.aggregate({
           where: where("PROSPECT"),
@@ -99,6 +101,10 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
         prisma.opportunity.aggregate({ where: where("LEAD"), _count: true }),
         prisma.opportunity.aggregate({
           where: where("PROPOSAL"),
+          _count: true,
+        }),
+        prisma.opportunity.aggregate({
+          where: where("AWAITING_FEEDBACK"),
           _count: true,
         }),
         prisma.opportunity.aggregate({ where: where("WON"), _count: true }),
@@ -112,8 +118,11 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
           _sum: { amount: true },
           _count: true,
         }),
+        // Money still in play: a proposal that has gone out and is awaiting
+        // feedback is undecided, so it belongs in the active forecast just as
+        // much as one still being drafted.
         prisma.opportunity.aggregate({
-          where: where("PROPOSAL"),
+          where: { ...scope, ...periodWhere, stage: { in: [...ACTIVE_PROPOSAL_STAGES] } },
           _sum: { amount: true },
           _count: true,
         }),
@@ -128,12 +137,14 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
         totalProspects: prospects._count,
         totalLeads: leads._count,
         totalProposals: proposals._count,
+        totalAwaitingFeedback: awaitingFeedback._count,
         totalClients: clients._count,
         wonValue: won._sum?.amount ?? 0,
         wonCount: won._count,
         lostValue: lost._sum?.amount ?? 0,
         lostCount: lost._count,
         activeProposalValue: activeProposals._sum?.amount ?? 0,
+        activeProposalCount: activeProposals._count,
       },
     });
   } catch (error) {
@@ -145,15 +156,7 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
   }
 });
 
-const STAGE_KEYS: Stage[] = [
-  "PROSPECT",
-  "LEAD",
-  "PROPOSAL",
-  "WON",
-  "LOST",
-  "NO_REPLY",
-  "DEFERRED",
-];
+const STAGE_KEYS: Stage[] = [...STAGES];
 
 const breakdownQuerySchema = z.object({
   dimension: z.enum(["owner", "department"]).default("owner"),
@@ -162,16 +165,10 @@ const breakdownQuerySchema = z.object({
   to: z.string().datetime().optional(),
 });
 
+// Built from STAGES so a new stage is never missing a key. A missing key here
+// would make `counts[stage] += n` evaluate to NaN and quietly corrupt totals.
 function emptyCounts(): StageCounts {
-  return {
-    PROSPECT: 0,
-    LEAD: 0,
-    PROPOSAL: 0,
-    WON: 0,
-    LOST: 0,
-    NO_REPLY: 0,
-    DEFERRED: 0,
-  };
+  return Object.fromEntries(STAGE_KEYS.map((stage) => [stage, 0])) as StageCounts;
 }
 
 type GroupedDatum = {
@@ -304,7 +301,9 @@ reportingRouter.get("/breakdown", async (req: AuthedRequest, res) => {
       } else if (group.stage === "LOST") {
         row.lostValue += value;
         row.lostCount += count;
-      } else if (group.stage === "PROPOSAL") {
+      } else if (ACTIVE_PROPOSAL_STAGES.includes(group.stage)) {
+        // Awaiting-feedback money is still live pipeline, so it rolls into
+        // the same active total rather than disappearing from the forecast.
         row.activeProposalValue += value;
       }
     }

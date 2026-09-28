@@ -45,16 +45,35 @@ import {
 
 import { useAuth } from "../auth/AuthContext";
 
+import { DateField, toNoonUTC } from "../components/DateField";
+
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const apiFetch = createApiClient(API_URL);
 
-type FilterKey = "all" | "prospect" | "lead" | "proposal" | "deferred";
+type FilterKey =
+  | "all"
+  | "prospect"
+  | "lead"
+  | "proposal"
+  | "awaiting"
+  | "deferred";
 
 const FILTER_STAGE: Partial<Record<FilterKey, Stage>> = {
   prospect: "PROSPECT",
   lead: "LEAD",
   proposal: "PROPOSAL",
+  awaiting: "AWAITING_FEEDBACK",
   deferred: "DEFERRED",
+};
+
+// Short label for the chip — the full "Awaiting Feedback" would crowd the row.
+const FILTER_LABEL: Record<FilterKey, string> = {
+  all: "All",
+  prospect: "Prospect",
+  lead: "Lead",
+  proposal: "Proposal",
+  awaiting: "Awaiting",
+  deferred: "Deferred",
 };
 
 function fmtDate(iso: string): string {
@@ -66,16 +85,6 @@ function fmtDate(iso: string): string {
         month: "short",
         year: "numeric",
       });
-}
-
-function normalizeRevisit(value: string): string | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-
-  const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
-  return dateOnly.test(trimmed)
-    ? `${trimmed}T12:00:00.000Z`
-    : trimmed;
 }
 
 export function OpportunitiesScreen() {
@@ -123,6 +132,7 @@ export function OpportunitiesScreen() {
       prospect: make("PROSPECT"),
       lead: make("LEAD"),
       proposal: make("PROPOSAL"),
+      awaiting: make("AWAITING_FEEDBACK"),
       deferred: make("DEFERRED"),
     };
   }, [opportunities]);
@@ -196,13 +206,13 @@ export function OpportunitiesScreen() {
         <Segmented
           value={filter}
           onChange={setFilter}
-          options={[
-            { key: "all", label: "All", count: counts.all },
-            { key: "prospect", label: "Prospect", count: counts.prospect },
-            { key: "lead", label: "Lead", count: counts.lead },
-            { key: "proposal", label: "Proposal", count: counts.proposal },
-            { key: "deferred", label: "Deferred", count: counts.deferred },
-          ]}
+          options={(
+            ["all", "prospect", "lead", "proposal", "awaiting", "deferred"] as const
+          ).map((key) => ({
+            key,
+            label: FILTER_LABEL[key],
+            count: counts[key],
+          }))}
         />
 
         <View style={styles.searchWrap}>
@@ -539,7 +549,7 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
   const [target, setTarget] = useState<Stage | null>(null);
   const [reason, setReason] = useState("");
   const [amount, setAmount] = useState("");
-  const [revisitAt, setRevisitAt] = useState("");
+  const [revisitAt, setRevisitAt] = useState<Date | null>(null);
   const [lostReason, setLostReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -659,7 +669,7 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
       }
     }
 
-    if (target === "DEFERRED" && !revisitAt.trim()) {
+    if (target === "DEFERRED" && !revisitAt) {
       Alert.alert("Revisit date required", "Enter when you'll revisit this deal.");
       return;
     }
@@ -673,8 +683,14 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
           toStage: target,
           reason: reason.trim(),
           ...(target === "WON" ? { amount: Number(amount) } : {}),
-          ...(target === "DEFERRED"
-            ? { revisitAt: normalizeRevisit(revisitAt) }
+          ...(target === "DEFERRED" || target === "AWAITING_FEEDBACK"
+            ? // Optional for AWAITING_FEEDBACK — omitted entirely when no
+              // date was chosen, so the server doesn't reject a missing one.
+              // toNoonUTC keeps the picked calendar day from slipping a day
+              // backwards when serialised in a UTC+ offset.
+              revisitAt
+              ? { revisitAt: toNoonUTC(revisitAt).toISOString() }
+              : {}
             : {}),
           ...(target === "LOST" && lostReason.trim()
             ? { lostReason: lostReason.trim() }
@@ -698,7 +714,7 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
     setTarget(null);
     setReason("");
     setAmount("");
-    setRevisitAt("");
+    setRevisitAt(null);
     setLostReason("");
   }
 
@@ -739,7 +755,12 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
   const bannerColor = STAGE_COLORS[detail.stage];
   const transitions = ALLOWED_TRANSITIONS[detail.stage];
   const needsAmount = target === "WON";
-  const needsRevisit = target === "DEFERRED";
+  // Both DEFERRED and AWAITING_FEEDBACK can carry a chase date. It is
+  // mandatory for a deferral, but a soft "I'll check back" nudge when the
+  // proposal goes out.
+  const followUpStage = target === "DEFERRED" || target === "AWAITING_FEEDBACK";
+  const followUpOptional = target === "AWAITING_FEEDBACK";
+  const followUpLabel = followUpOptional ? "Follow-up date (optional)" : "Revisit date";
   const needsLostReason = target === "LOST";
 
   return (
@@ -819,7 +840,11 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
 
           {detail.revisitAt ? (
             <InfoRow
-              label="Revisit"
+              // Same field, different meaning: a revisit date for a
+              // deferral, a feedback-chase date for a sent proposal.
+              label={
+                detail.stage === "AWAITING_FEEDBACK" ? "Feedback due" : "Revisit"
+              }
               value={fmtDate(detail.revisitAt)}
               icon={IconSet.Calendar}
             />
@@ -993,18 +1018,17 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
                   />
                 ) : null}
 
-                {needsRevisit ? (
-                  <>
-                    <TextFieldForm
-                      label="Revisit date"
-                      value={revisitAt}
-                      onChangeText={setRevisitAt}
-                      placeholder="2026-09-30"
-                    />
-                    <Text style={styles.hintText}>
-                      Use YYYY-MM-DD — stored as 12:00 UTC.
-                    </Text>
-                  </>
+                {followUpStage ? (
+                  <DateField
+                    label={followUpLabel}
+                    value={revisitAt}
+                    onChange={setRevisitAt}
+                    hint={
+                      followUpOptional
+                        ? "Optional. If set, we'll remind you to chase for feedback on this date."
+                        : "Required to defer."
+                    }
+                  />
                 ) : null}
 
                 {needsLostReason ? (

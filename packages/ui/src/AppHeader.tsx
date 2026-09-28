@@ -12,10 +12,10 @@ import type { ReactNode } from "react";
 import { tokens } from "@crm/core";
 
 import { PageHero } from "./PageHero";
-import { IconSet } from "./icons";
+import { IconSet, type IconName } from "./icons";
 
 type AppHeaderProps = {
-  icon?: string;
+  icon?: IconName;
   title: string;
   subtitle?: string;
   right?: ReactNode;

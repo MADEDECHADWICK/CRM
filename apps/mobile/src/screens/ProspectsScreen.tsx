@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  Pressable,
   RefreshControl,
-  ScrollView,
+  type LayoutChangeEvent,
+  type ScrollView,
   StyleSheet,
   Text,
   View,
@@ -10,12 +13,14 @@ import {
 
 import {
   createApiClient,
+  type Contact,
   type Organization,
   tokens,
 } from "@crm/core";
 
 import {
   AppHeader,
+  Button,
   Card,
   EmptyState,
   Icon,
@@ -25,6 +30,7 @@ import {
 } from "@crm/ui";
 
 import { useAuth } from "../auth/AuthContext";
+import { ContactFormSheet } from "../components/ContactFormSheet";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const apiFetch = createApiClient(API_URL);
@@ -39,19 +45,46 @@ function initials(name: string): string {
     .toUpperCase();
 }
 
-export function ProspectsScreen() {
+type ProspectsScreenProps = {
+  /** Client to expand and scroll to on arrival (e.g. tapped from Home). */
+  focusOrganizationId?: string | null;
+  /** Called once the focus has been applied, so it can be cleared upstream. */
+  onFocusHandled?: () => void;
+};
+
+export function ProspectsScreen({
+  focusOrganizationId = null,
+  onFocusHandled,
+}: ProspectsScreenProps) {
   const { token } = useAuth();
 
+  const scrollRef = useRef<ScrollView>(null);
+  const cardOffsets = useRef<Record<string, number>>({});
+  const pendingFocusRef = useRef<string | null>(null);
+
   const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Contact | null>(null);
+  const [formOrg, setFormOrg] = useState<Organization | null>(null);
+
   const load = useCallback(async () => {
     if (!token) return;
 
-    const data = await apiFetch<Organization[]>("/organizations", token);
-    setOrganizations(data);
+    // Fetched together so expanding a client shows its people instantly
+    // instead of waiting on a second round trip.
+    const [orgData, contactData] = await Promise.all([
+      apiFetch<Organization[]>("/organizations", token),
+      apiFetch<Contact[]>("/contacts", token),
+    ]);
+
+    setOrganizations(orgData);
+    setContacts(contactData);
   }, [token]);
 
   useEffect(() => {
@@ -69,18 +102,120 @@ export function ProspectsScreen() {
     }
   }
 
+  const contactsByOrg = useMemo(() => {
+    const grouped = new Map<string, Contact[]>();
+
+    for (const contact of contacts) {
+      const list = grouped.get(contact.organizationId);
+      if (list) {
+        list.push(contact);
+      } else {
+        grouped.set(contact.organizationId, [contact]);
+      }
+    }
+
+    return grouped;
+  }, [contacts]);
+
   const filtered = useMemo(() => {
     const lower = query.trim().toLowerCase();
 
     if (!lower) return organizations;
 
     return organizations.filter(
-      (organization) =>
-        organization.name.toLowerCase().includes(lower) ||
-        (organization.industry ?? "").toLowerCase().includes(lower) ||
-        (organization.email ?? "").toLowerCase().includes(lower)
+      (organization) => {
+        const orgMatches =
+          organization.name.toLowerCase().includes(lower) ||
+          (organization.industry ?? "").toLowerCase().includes(lower) ||
+          (organization.email ?? "").toLowerCase().includes(lower);
+
+        // Also match a contact's name so searching "Jane" finds her client.
+        const peopleMatch = (contactsByOrg.get(organization.id) ?? []).some(
+          (contact) =>
+            contact.name.toLowerCase().includes(lower) ||
+            (contact.title ?? "").toLowerCase().includes(lower) ||
+            (contact.email ?? "").toLowerCase().includes(lower)
+        );
+
+        return orgMatches || peopleMatch;
+      }
     );
-  }, [organizations, query]);
+  }, [organizations, query, contactsByOrg]);
+
+  // Arriving from Home with a client selected: drop any active search so the
+  // client is definitely in the list, and expand it.
+  useEffect(() => {
+    if (!focusOrganizationId) return;
+
+    // Stored rather than scrolled to directly — the list may not have loaded
+    // yet, so the card has no measured position at this point.
+    pendingFocusRef.current = focusOrganizationId;
+    setQuery("");
+    setExpandedId(focusOrganizationId);
+    onFocusHandled?.();
+  }, [focusOrganizationId, onFocusHandled]);
+
+  // Once the cards have actually laid out, bring the pending client into view.
+  useEffect(() => {
+    const id = pendingFocusRef.current;
+    if (!id) return;
+
+    const y = cardOffsets.current[id];
+    if (y == null) return;
+
+    pendingFocusRef.current = null;
+
+    // Let the expansion settle before measuring the final position.
+    const timer = setTimeout(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, y - 12),
+        animated: true,
+      });
+    }, 80);
+
+    return () => clearTimeout(timer);
+  }, [organizations, filtered.length, expandedId]);
+
+  function openAdd(organization: Organization) {
+    setEditing(null);
+    setFormOrg(organization);
+    setFormOpen(true);
+  }
+
+  function openEdit(organization: Organization, contact: Contact) {
+    setEditing(contact);
+    setFormOrg(organization);
+    setFormOpen(true);
+  }
+
+  function confirmDelete(contact: Contact) {
+    Alert.alert(
+      "Delete contact?",
+      `${contact.name} will be removed from this client.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          async onPress() {
+            if (!token) return;
+
+            try {
+              await apiFetch(`/contacts/${contact.id}`, token, {
+                method: "DELETE",
+              });
+              await load();
+            } catch (error) {
+              Alert.alert(
+                "Unable to delete contact",
+                error instanceof Error ? error.message : "Please try again."
+              );
+            }
+          },
+        },
+      ]
+    );
+  }
 
   if (loading) {
     return (
@@ -93,16 +228,17 @@ export function ProspectsScreen() {
   }
 
   return (
-    <Screen>
-      <ScrollView
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={refresh}
-            tintColor={tokens.color.brand}
-          />
-        }
-      >
+    <Screen
+      scrollRef={scrollRef}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={refresh}
+          tintColor={tokens.color.brand}
+        />
+      }
+    >
+      <>
         <AppHeader
           title="Prospects"
           subtitle={`${organizations.length} organisations on file`}
@@ -112,7 +248,7 @@ export function ProspectsScreen() {
           <SearchBar
             value={query}
             onChangeText={setQuery}
-            placeholder="Search prospects"
+            placeholder="Search clients, industries or people"
           />
         </View>
 
@@ -127,73 +263,230 @@ export function ProspectsScreen() {
             subtitle={
               organizations.length === 0
                 ? "Organisations you engage become prospects here."
-                : "Try a different name, industry or email."
+                : "Try a different name, industry or contact person."
             }
           />
         ) : (
-          filtered.map((organization) => (
-            <Card key={organization.id} style={styles.orgCard}>
-              <View style={styles.orgHeader}>
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>
-                    {initials(organization.name)}
-                  </Text>
-                </View>
+          filtered.map((organization) => {
+            const expanded = expandedId === organization.id;
+            const people = contactsByOrg.get(organization.id) ?? [];
 
-                <View style={styles.orgTextCol}>
-                  <Text style={styles.orgName} numberOfLines={1}>
-                    {organization.name}
-                  </Text>
-
-                  {organization.industry ? (
-                    <View style={styles.industryChip}>
-                      <Text style={styles.industryText}>
-                        {organization.industry}
+            return (
+              <Card
+                key={organization.id}
+                style={styles.orgCard}
+                onLayout={(event: LayoutChangeEvent) => {
+                  cardOffsets.current[organization.id] =
+                    event.nativeEvent.layout.y;
+                }}
+              >
+                <Pressable
+                  onPress={() => setExpandedId(expanded ? null : organization.id)}
+                >
+                  <View style={styles.orgHeader}>
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>
+                        {initials(organization.name)}
                       </Text>
                     </View>
-                  ) : null}
-                </View>
 
-                <Icon
-                  name={IconSet.ChevronRight}
-                  size={16}
-                  color={tokens.color.inkFaint}
-                />
-              </View>
-
-              {(organization.email || organization.phone) ? (
-                <View style={styles.contactRows}>
-                  {organization.email ? (
-                    <View style={styles.contactRow}>
-                      <Icon
-                        name={IconSet.Mail}
-                        size={14}
-                        color={tokens.color.inkFaint}
-                      />
-                      <Text style={styles.contactText} numberOfLines={1}>
-                        {organization.email}
+                    <View style={styles.orgTextCol}>
+                      <Text style={styles.orgName} numberOfLines={1}>
+                        {organization.name}
                       </Text>
+
+                      <View style={styles.badgeRow}>
+                        {organization.industry ? (
+                          <View style={styles.industryChip}>
+                            <Text style={styles.industryText}>
+                              {organization.industry}
+                            </Text>
+                          </View>
+                        ) : null}
+
+                        <View style={styles.peopleChip}>
+                          <Icon
+                            name={IconSet.Person}
+                            size={10}
+                            color={tokens.color.brand}
+                          />
+                          <Text style={styles.peopleChipText}>
+                            {people.length} contact{people.length === 1 ? "" : "s"}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    <Icon
+                      name={expanded ? IconSet.ChevronUp : IconSet.ChevronDown}
+                      size={16}
+                      color={tokens.color.inkFaint}
+                    />
+                  </View>
+
+                  {(organization.email || organization.phone) ? (
+                    <View style={styles.contactRows}>
+                      {organization.email ? (
+                        <View style={styles.contactRow}>
+                          <Icon
+                            name={IconSet.Mail}
+                            size={14}
+                            color={tokens.color.inkFaint}
+                          />
+                          <Text style={styles.contactText} numberOfLines={1}>
+                            {organization.email}
+                          </Text>
+                        </View>
+                      ) : null}
+
+                      {organization.phone ? (
+                        <View style={styles.contactRow}>
+                          <Icon
+                            name={IconSet.Phone}
+                            size={14}
+                            color={tokens.color.inkFaint}
+                          />
+                          <Text style={styles.contactText} numberOfLines={1}>
+                            {organization.phone}
+                          </Text>
+                        </View>
+                      ) : null}
                     </View>
                   ) : null}
+                </Pressable>
 
-                  {organization.phone ? (
-                    <View style={styles.contactRow}>
-                      <Icon
-                        name={IconSet.Phone}
-                        size={14}
-                        color={tokens.color.inkFaint}
-                      />
-                      <Text style={styles.contactText} numberOfLines={1}>
-                        {organization.phone}
+                {expanded ? (
+                  <View style={styles.detail}>
+                    <Text style={styles.detailHeading}>
+                      Contact information
+                    </Text>
+
+                    {people.length === 0 ? (
+                      <Text style={styles.detailEmpty}>
+                        No contacts yet. Add the people you speak to at{" "}
+                        {organization.name}.
                       </Text>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-            </Card>
-          ))
+                    ) : (
+                      people.map((contact) => (
+                        <View key={contact.id} style={styles.person}>
+                          <View style={styles.personAvatar}>
+                            <Text style={styles.personInitials}>
+                              {initials(contact.name)}
+                            </Text>
+                          </View>
+
+                          <View style={styles.personText}>
+                            <View style={styles.personNameRow}>
+                              <Text
+                                style={styles.personName}
+                                numberOfLines={1}
+                              >
+                                {contact.name}
+                              </Text>
+
+                              {contact.isPrimary ? (
+                                <View style={styles.primaryChip}>
+                                  <Text style={styles.primaryText}>
+                                    Primary
+                                  </Text>
+                                </View>
+                              ) : null}
+                            </View>
+
+                            {contact.title ? (
+                              <Text
+                                style={styles.personTitle}
+                                numberOfLines={1}
+                              >
+                                {contact.title}
+                                {contact.department
+                                  ? ` · ${contact.department}`
+                                  : ""}
+                              </Text>
+                            ) : null}
+
+                            {contact.email ? (
+                              <View style={styles.personRow}>
+                                <Icon
+                                  name={IconSet.Mail}
+                                  size={12}
+                                  color={tokens.color.inkFaint}
+                                />
+                                <Text
+                                  style={styles.personContact}
+                                  numberOfLines={1}
+                                >
+                                  {contact.email}
+                                </Text>
+                              </View>
+                            ) : null}
+
+                            {contact.phone ? (
+                              <View style={styles.personRow}>
+                                <Icon
+                                  name={IconSet.Phone}
+                                  size={12}
+                                  color={tokens.color.inkFaint}
+                                />
+                                <Text
+                                  style={styles.personContact}
+                                  numberOfLines={1}
+                                >
+                                  {contact.phone}
+                                </Text>
+                              </View>
+                            ) : null}
+
+                            {contact.notes ? (
+                              <Text style={styles.personNotes}>
+                                {contact.notes}
+                              </Text>
+                            ) : null}
+                          </View>
+
+                          <View style={styles.personActions}>
+                            <Button
+                              title="Edit"
+                              onPress={() => openEdit(organization, contact)}
+                              variant="ghost"
+                              size="sm"
+                            />
+                            <Button
+                              title="Delete"
+                              onPress={() => confirmDelete(contact)}
+                              variant="danger"
+                              size="sm"
+                            />
+                          </View>
+                        </View>
+                      ))
+                    )}
+
+                    <Button
+                      title="Add contact"
+                      onPress={() => openAdd(organization)}
+                      icon={IconSet.Add}
+                      variant="secondary"
+                      size="sm"
+                    />
+                  </View>
+                ) : null}
+              </Card>
+            );
+          })
         )}
-      </ScrollView>
+      </>
+
+      {formOrg ? (
+        <ContactFormSheet
+          visible={formOpen}
+          token={token ?? ""}
+          contact={editing}
+          organization={formOrg}
+          onClose={() => setFormOpen(false)}
+          onSaved={load}
+        />
+      ) : null}
     </Screen>
   );
 }
@@ -250,8 +543,14 @@ const styles = StyleSheet.create({
     color: tokens.color.ink,
   },
 
+  badgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+
   industryChip: {
-    alignSelf: "flex-start",
     backgroundColor: tokens.color.surfaceMuted,
     borderRadius: tokens.radius.pill,
     paddingHorizontal: 9,
@@ -262,6 +561,22 @@ const styles = StyleSheet.create({
     ...tokens.type.micro,
     letterSpacing: 0,
     color: tokens.color.inkMuted,
+  },
+
+  peopleChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: tokens.color.brandSoft,
+    borderRadius: tokens.radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+
+  peopleChipText: {
+    ...tokens.type.micro,
+    letterSpacing: 0,
+    color: tokens.color.brand,
   },
 
   contactRows: {
@@ -282,5 +597,110 @@ const styles = StyleSheet.create({
     ...tokens.type.caption,
     color: tokens.color.inkMuted,
     flexShrink: 1,
+  },
+
+  detail: {
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: tokens.color.border,
+  },
+
+  detailHeading: {
+    ...tokens.type.micro,
+    textTransform: "uppercase",
+    color: tokens.color.inkFaint,
+    marginBottom: 12,
+  },
+
+  detailEmpty: {
+    ...tokens.type.caption,
+    color: tokens.color.inkMuted,
+    marginBottom: 12,
+  },
+
+  person: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    paddingBottom: 14,
+    marginBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.color.border,
+  },
+
+  personAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: tokens.color.brandSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  personInitials: {
+    ...tokens.type.micro,
+    letterSpacing: 0,
+    fontWeight: "800",
+    color: tokens.color.brand,
+  },
+
+  personText: {
+    flex: 1,
+    gap: 3,
+  },
+
+  personNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+
+  personName: {
+    ...tokens.type.bodyStrong,
+    color: tokens.color.ink,
+    flexShrink: 1,
+  },
+
+  primaryChip: {
+    backgroundColor: tokens.color.brandSoft,
+    borderRadius: tokens.radius.pill,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+
+  primaryText: {
+    ...tokens.type.micro,
+    letterSpacing: 0,
+    color: tokens.color.brand,
+  },
+
+  personTitle: {
+    ...tokens.type.caption,
+    color: tokens.color.inkMuted,
+  },
+
+  personRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 2,
+  },
+
+  personContact: {
+    ...tokens.type.caption,
+    color: tokens.color.inkMuted,
+    flexShrink: 1,
+  },
+
+  personNotes: {
+    ...tokens.type.caption,
+    color: tokens.color.inkFaint,
+    marginTop: 4,
+  },
+
+  personActions: {
+    gap: 4,
+    alignItems: "flex-end",
   },
 });

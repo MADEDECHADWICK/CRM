@@ -32,6 +32,14 @@ function withinWeek(offsetDays: number): Date {
     : new Date(now.getTime() - 2 * 60 * 60 * 1000);
 }
 
+// Strictly in the future, N days from now at 09:00 — used for the optional
+// follow-up / revisit dates, which are always ahead of the clock.
+function daysFromNow(daysAhead: number): Date {
+  const d = new Date(Date.now() + daysAhead * DAY_MS);
+  d.setHours(9, 0, 0, 0);
+  return d;
+}
+
 // Within the current calendar month, N days back from today (>= the 2nd).
 function withinMonth(daysBack: number): Date {
   const now = new Date();
@@ -139,6 +147,7 @@ async function main() {
       | "PROSPECT"
       | "LEAD"
       | "PROPOSAL"
+      | "AWAITING_FEEDBACK"
       | "WON"
       | "LOST"
       | "NO_REPLY"
@@ -178,6 +187,21 @@ async function main() {
       amount: 680000,
       owner: "mary",
       enteredAt: withinWeek(1),
+    },
+    {
+      // This week — proposal sent, client still reading it. Sits between the
+      // KKTel proposal and the win so the "awaiting feedback" slice is
+      // visible without being mistaken for a closed deal.
+      title: "Demo — Kenya Tea Packers IFRS advisory proposal",
+      org: "Kenya Tea Packers",
+      industry: "Agriculture",
+      department: "AUDIT",
+      stage: "AWAITING_FEEDBACK",
+      service: "IFRS 16 transition advisory",
+      amount: 520000,
+      owner: "john",
+      enteredAt: withinWeek(2),
+      revisitAt: daysFromNow(6),
     },
     {
       // This week — won today.
@@ -376,6 +400,126 @@ async function main() {
     });
   }
 
+  // Named people at each client. Distinct from the generic company email /
+  // phone on Organization — this is who you actually speak to.
+  type DemoContact = {
+    org: string;
+    industry: string;
+    name: string;
+    title: string;
+    department: string;
+    email: string;
+    phone: string;
+    isPrimary: boolean;
+    notes?: string;
+  };
+
+  const demoContacts: DemoContact[] = [
+    {
+      org: "ABC Retail Ltd",
+      industry: "Retail",
+      name: "Jane Mwangi",
+      title: "Head of Finance",
+      department: "Finance",
+      email: "jane.mwangi@abc.co.ke",
+      phone: "+254 720 111 222",
+      isPrimary: true,
+      notes: "Prefers WhatsApp. Signs off on all tax filings.",
+    },
+    {
+      org: "ABC Retail Ltd",
+      industry: "Retail",
+      name: "Peter Ouma",
+      title: "Finance Officer",
+      department: "Finance",
+      email: "peter.ouma@abc.co.ke",
+      phone: "+254 733 444 555",
+      isPrimary: false,
+    },
+    {
+      org: "KKTel Communications",
+      industry: "Telecom",
+      name: "Samuel Kiplagat",
+      title: "Chief Financial Officer",
+      department: "Finance",
+      email: "samuel.k@kktel.co.ke",
+      phone: "+254 711 000 111",
+      isPrimary: true,
+      notes: "Decision maker on the network audit. Introduce via Mary.",
+    },
+    {
+      org: "Lakeview Hospital",
+      industry: "Healthcare",
+      name: "Dr. Amina Hassan",
+      title: "Hospital Administrator",
+      department: "Operations",
+      email: "a.hassan@lakeview.co.ke",
+      phone: "+254 722 888 999",
+      isPrimary: true,
+    },
+    {
+      org: "Harbour Logistics",
+      industry: "Logistics",
+      name: "Brian Otieno",
+      title: "Managing Director",
+      department: "Executive",
+      email: "brian@harbourlog.co.ke",
+      phone: "+254 700 555 666",
+      isPrimary: true,
+      notes: "Slow to reply. Follow up on WhatsApp, not email.",
+    },
+    {
+      org: "Bright Future Schools",
+      industry: "Education",
+      name: "Grace Njeri",
+      title: "Bursar",
+      department: "Finance",
+      email: "grace.njeri@brightfuture.ac.ke",
+      phone: "+254 799 333 222",
+      isPrimary: true,
+    },
+    {
+      // Reading the sent IFRS proposal — the person who hasn't replied yet.
+      org: "Kenya Tea Packers",
+      industry: "Agriculture",
+      name: "Daniel Mwangi",
+      title: "Group Financial Controller",
+      department: "Finance",
+      email: "d.mwangi@kenyateapackers.co.ke",
+      phone: "+254 721 444 555",
+      isPrimary: true,
+      notes: "Reviewing the IFRS 16 proposal internally. Chasing after the 6th.",
+    },
+  ];
+
+  // Upserted by (client, person) so re-seeding refreshes the demo people
+  // instead of duplicating them.
+  for (const c of demoContacts) {
+    const organization = await mid(c.org, c.industry);
+
+    const details = {
+      name: c.name,
+      title: c.title,
+      department: c.department,
+      email: c.email,
+      phone: c.phone,
+      isPrimary: c.isPrimary,
+      notes: c.notes,
+    };
+
+    const existing = await prisma.contact.findFirst({
+      where: { organizationId: organization.id, name: c.name },
+    });
+
+    if (existing) {
+      await prisma.contact.update({ where: { id: existing.id }, data: details });
+    } else {
+      await prisma.contact.create({
+        data: { ...details, organizationId: organization.id },
+      });
+    }
+  }
+
   console.log("Users (password: " + DEMO_PASSWORD + "):");
   console.log({
     partner: john.email,
@@ -383,6 +527,7 @@ async function main() {
     bd: grace.email,
   });
   console.log("Seeded", demo.length, "opportunities across periods.");
+  console.log("Seeded", demoContacts.length, "client contacts.");
 
   // Prove the period buckets resolve to different, real numbers — running the
   // exact same reportPeriodRange the API uses (all roles see all data here).

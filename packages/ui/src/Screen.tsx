@@ -4,20 +4,21 @@
 // scrolling, and keyboard handling. Screens lay their own headers out so
 // they can add the platform top inset where it matters.
 
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
   View,
+  type RefreshControlProps,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
 
 import { tokens } from "@crm/core";
 
-import { topInset } from "./util";
+import { useLayoutInsets } from "./util";
 
 type ScreenProps = {
   children: ReactNode;
@@ -25,7 +26,9 @@ type ScreenProps = {
   padded?: boolean;
   bg?: string;
   contentContainerStyle?: StyleProp<ViewStyle>;
-  refreshControl?: React.ReactElement;
+  refreshControl?: React.ReactElement<RefreshControlProps>;
+  /** Handle on the inner ScrollView, for screens that scroll to an item. */
+  scrollRef?: Ref<ScrollView>;
 };
 
 export function Screen({
@@ -35,9 +38,18 @@ export function Screen({
   bg,
   contentContainerStyle,
   refreshControl,
+  scrollRef,
 }: ScreenProps) {
+  const insets = useLayoutInsets();
+
   const body = (
-    <View style={[padded && styles.padded, contentContainerStyle]}>
+    <View
+      style={[
+        padded && styles.padded,
+        { paddingTop: insets.top + 10 },
+        contentContainerStyle,
+      ]}
+    >
       {children}
     </View>
   );
@@ -49,6 +61,7 @@ export function Screen({
     >
       {scroll ? (
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -75,7 +88,6 @@ const styles = StyleSheet.create({
 
   padded: {
     flex: 1,
-    paddingTop: topInset + 10,
     paddingHorizontal: 20,
     paddingBottom: 32,
   },

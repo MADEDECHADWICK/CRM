@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { Icon, IconSet, bottomInset } from "@crm/ui";
+import { Icon, IconSet, useLayoutInsets } from "@crm/ui";
 import { tokens } from "@crm/core";
 
 import { useAuth } from "../auth/AuthContext";
@@ -40,8 +40,14 @@ function buildScreens(user: {
 export function AppNavigator() {
   const { isAuthenticated, user } = useAuth();
 
+  const insets = useLayoutInsets();
+
   const [screen, setScreen] =
     useState<ScreenName>("HOME");
+
+  // Client tapped on Home, carried over to Prospects so it can be expanded
+  // and scrolled into view on arrival.
+  const [focusClientId, setFocusClientId] = useState<string | null>(null);
 
   const screens = buildScreens(user);
 
@@ -59,11 +65,23 @@ export function AppNavigator() {
 
   switch (activeScreen) {
     case "HOME":
-      content = <HomeScreen />;
+      content = (
+        <HomeScreen
+          onOpenClient={(organizationId) => {
+            setFocusClientId(organizationId);
+            setScreen("PROSPECTS");
+          }}
+        />
+      );
       break;
 
     case "PROSPECTS":
-      content = <ProspectsScreen />;
+      content = (
+        <ProspectsScreen
+          focusOrganizationId={focusClientId}
+          onFocusHandled={() => setFocusClientId(null)}
+        />
+      );
       break;
 
     case "PIPELINE":
@@ -87,7 +105,12 @@ export function AppNavigator() {
     <View style={styles.container}>
       <View style={styles.content}>{content}</View>
 
-      <View style={styles.navigation}>
+      <View
+        style={[
+          styles.navigation,
+          { paddingBottom: insets.bottom + 6 },
+        ]}
+      >
         {screens.map((item) => {
           const active = activeScreen === item.key;
 
@@ -142,7 +165,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: tokens.color.border,
     paddingTop: 6,
-    paddingBottom: bottomInset,
     paddingHorizontal: 4,
     ...tokens.shadow.floated,
   },

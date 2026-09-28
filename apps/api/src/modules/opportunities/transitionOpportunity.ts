@@ -25,6 +25,12 @@ export async function transitionOpportunity(input: TransitionInput) {
     if (!revisitAt) throw new Error("A revisit date is required to defer an opportunity.");
     if (revisitAt <= new Date()) throw new Error("Revisit date must be in the future.");
   }
+  // AWAITING_FEEDBACK never *requires* a chase date — the client may be
+  // reading it today — but if one is supplied it must still be sensible, and
+  // it drives an automatic follow-up just like a deferral does.
+  if (toStage === "AWAITING_FEEDBACK" && revisitAt && revisitAt <= new Date()) {
+    throw new Error("Feedback due date must be in the future.");
+  }
 
   return prisma.$transaction(async (tx) => {
     // Re-fetch and validate the state machine INSIDE the transaction, so a
@@ -76,6 +82,22 @@ export async function transitionOpportunity(input: TransitionInput) {
       await tx.followup.create({
         data: {
           note: `Revisit deferred opportunity: ${current.title}`,
+          type: "CALL",
+          dueAt: revisitAt,
+          opportunityId,
+          assignedToId: current.ownerId ?? changedById,
+          createdById: changedById,
+        },
+      });
+    }
+
+    // Same courtesy for a proposal that went out: if the user committed to
+    // checking back, that promise becomes a real reminder instead of a note
+    // someone has to remember.
+    if (toStage === "AWAITING_FEEDBACK" && revisitAt) {
+      await tx.followup.create({
+        data: {
+          note: `Chase proposal feedback: ${current.title}`,
           type: "CALL",
           dueAt: revisitAt,
           opportunityId,

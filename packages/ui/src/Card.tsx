@@ -8,6 +8,7 @@ import {
   Pressable,
   StyleSheet,
   View,
+  type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
@@ -18,13 +19,16 @@ type CardProps = {
   children: ReactNode;
   onPress?: () => void;
   style?: StyleProp<ViewStyle>;
+  /** Reports the card's position so a screen can scroll it into view. */
+  onLayout?: (event: LayoutChangeEvent) => void;
 };
 
-export function Card({ children, onPress, style }: CardProps) {
+export function Card({ children, onPress, style, onLayout }: CardProps) {
   if (onPress) {
     return (
       <Pressable
         onPress={onPress}
+        onLayout={onLayout}
         style={({ pressed }) => [
           styles.card,
           pressed && styles.pressed,
@@ -36,7 +40,11 @@ export function Card({ children, onPress, style }: CardProps) {
     );
   }
 
-  return <View style={[styles.card, style]}>{children}</View>;
+  return (
+    <View onLayout={onLayout} style={[styles.card, style]}>
+      {children}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({

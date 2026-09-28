@@ -11,14 +11,13 @@ import {
 
 import {
   createApiClient,
-  formatAmount,
+  type Contact,
   type Opportunity,
   type ReportingSummary,
   tokens,
 } from "@crm/core";
 
 import {
-  Badge,
   Card,
   EmptyState,
   Icon,
@@ -26,6 +25,7 @@ import {
   IconSet,
   PageHero,
   Screen,
+  SearchBar,
   Section,
   StatCard,
 } from "@crm/ui";
@@ -35,6 +35,9 @@ import { useAuth } from "../auth/AuthContext";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
 const apiFetch = createApiClient(API_URL);
+
+/** Contacts shown before the user starts searching. */
+const CONTACTS_PREVIEW = 3;
 
 function greetingForHour(hour: number): string {
   if (hour < 12) return "Good morning";
@@ -52,7 +55,12 @@ function initials(name: string): string {
     .toUpperCase();
 }
 
-export function HomeScreen() {
+type HomeScreenProps = {
+  /** Jump to a client on the Prospects screen (their contact list). */
+  onOpenClient?: (organizationId: string) => void;
+};
+
+export function HomeScreen({ onOpenClient }: HomeScreenProps) {
   const { token, user, logout } = useAuth();
 
   function confirmSignOut() {
@@ -68,19 +76,23 @@ export function HomeScreen() {
 
   const [summary, setSummary] = useState<ReportingSummary | null>(null);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contactQuery, setContactQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
 
-    const [summaryData, opportunityData] = await Promise.all([
+    const [summaryData, opportunityData, contactData] = await Promise.all([
       apiFetch<ReportingSummary>("/reporting/summary", token),
       apiFetch<Opportunity[]>("/opportunities", token),
+      apiFetch<Contact[]>("/contacts", token),
     ]);
 
     setSummary(summaryData);
     setOpportunities(opportunityData);
+    setContacts(contactData);
   }, [token]);
 
   useEffect(() => {
@@ -103,6 +115,32 @@ export function HomeScreen() {
     const total = counts.reduce((sum, item) => sum + item.count, 0);
     return { counts, total };
   }, [opportunities]);
+
+  // Idle state shows only a short preview — with 1000+ clients a full list
+  // would be unusable on a phone. Searching is the way to find anyone else,
+  // and while a search is active every match is shown.
+  const matches = useMemo(() => {
+    const lower = contactQuery.trim().toLowerCase();
+
+    if (!lower) return contacts;
+
+    return contacts.filter((contact) =>
+      [
+        contact.name,
+        contact.title ?? "",
+        contact.department ?? "",
+        contact.email ?? "",
+        contact.phone ?? "",
+        contact.organization?.name ?? "",
+      ].some((field) => field.toLowerCase().includes(lower))
+    );
+  }, [contacts, contactQuery]);
+
+  const isSearching = contactQuery.trim().length > 0;
+  const visibleContacts = isSearching
+    ? matches
+    : contacts.slice(0, CONTACTS_PREVIEW);
+  const hiddenCount = contacts.length - visibleContacts.length;
 
   if (loading || !summary) {
     return (
@@ -210,54 +248,126 @@ export function HomeScreen() {
         </Card>
 
         <Section
-          title="Recent opportunities"
-          action={<Text style={styles.sectionMeta}>{opportunities.length} total</Text>}
+          title="Client contact information"
+          action={
+            <Text style={styles.sectionMeta}>
+              {isSearching
+                ? `${matches.length} of ${contacts.length}`
+                : `${contacts.length} on file`}
+            </Text>
+          }
         />
 
-        {opportunities.length === 0 ? (
+        {contacts.length > 0 ? (
+          <View style={styles.contactSearch}>
+            <SearchBar
+              value={contactQuery}
+              onChangeText={setContactQuery}
+              placeholder="Search clients, people, email or phone"
+            />
+          </View>
+        ) : null}
+
+        {contacts.length === 0 ? (
           <EmptyState
-            icon={IconSet.Pipeline}
-            title="Pipeline is quiet"
-            subtitle="Create a new opportunity to start tracking it here."
+            icon={IconSet.Person}
+            title="No contacts yet"
+            subtitle="Open Prospects to add the people you speak to at each client."
+          />
+        ) : visibleContacts.length === 0 ? (
+          <EmptyState
+            icon={IconSet.Search}
+            title="Nothing matches"
+            subtitle="Try a different client, contact name, email or phone number."
           />
         ) : (
-          opportunities.slice(0, 4).map((opportunity) => (
-            <Card key={opportunity.id} style={styles.oppCard}>
-              <View style={styles.oppHeader}>
-                <View style={styles.oppTextCol}>
-                  <Text style={styles.oppTitle} numberOfLines={1}>
-                    {opportunity.title}
-                  </Text>
-
-                  <Text style={styles.oppMeta} numberOfLines={1}>
-                    {opportunity.organization?.name ?? "Unknown organization"}
-                    {opportunity.department?.name
-                      ? ` · ${opportunity.department.name}`
-                      : ""}
+          visibleContacts.map((contact) => (
+            <Card
+              key={contact.id}
+              style={styles.contactCard}
+              onPress={() => onOpenClient?.(contact.organizationId)}
+            >
+              <View style={styles.contactRow}>
+                <View style={styles.contactAvatar}>
+                  <Text style={styles.contactInitials}>
+                    {initials(contact.name)}
                   </Text>
                 </View>
 
-                {opportunity.amount != null ? (
-                  <Text style={styles.oppAmount}>
-                    {formatAmount(
-                      opportunity.amount,
-                      opportunity.currency
-                    )}
-                  </Text>
-                ) : null}
-              </View>
+                <View style={styles.contactTextCol}>
+                  <View style={styles.contactNameRow}>
+                    <Text style={styles.contactName} numberOfLines={1}>
+                      {contact.name}
+                    </Text>
 
-              <View style={styles.oppFooter}>
-                <Badge stage={opportunity.stage} />
+                    {contact.isPrimary ? (
+                      <View style={styles.primaryChip}>
+                        <Text style={styles.primaryText}>Primary</Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  <Text style={styles.contactOrg} numberOfLines={1}>
+                    {contact.organization?.name ?? "Unknown organization"}
+                    {contact.title ? ` · ${contact.title}` : ""}
+                  </Text>
+                </View>
+
                 <Icon
                   name={IconSet.ChevronRight}
                   size={16}
                   color={tokens.color.inkFaint}
                 />
               </View>
+
+              <View style={styles.contactDetails}>
+                {contact.email ? (
+                  <View style={styles.detailRow}>
+                    <Icon
+                      name={IconSet.Mail}
+                      size={13}
+                      color={tokens.color.inkFaint}
+                    />
+                    <Text style={styles.detailText} numberOfLines={1}>
+                      {contact.email}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {contact.phone ? (
+                  <View style={styles.detailRow}>
+                    <Icon
+                      name={IconSet.Phone}
+                      size={13}
+                      color={tokens.color.inkFaint}
+                    />
+                    <Text style={styles.detailText} numberOfLines={1}>
+                      {contact.phone}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+
+              <Text style={styles.openHint}>
+                Tap to see everyone at this client
+              </Text>
             </Card>
           ))
         )}
+
+        {hiddenCount > 0 ? (
+          <View style={styles.moreRow}>
+            <Icon
+              name={IconSet.Search}
+              size={14}
+              color={tokens.color.inkFaint}
+            />
+            <Text style={styles.moreText}>
+              {hiddenCount} more contact{hiddenCount === 1 ? "" : "s"} — search
+              above to find them
+            </Text>
+          </View>
+        ) : null}
       </ScrollView>
     </Screen>
   );
@@ -316,40 +426,108 @@ const styles = StyleSheet.create({
     color: tokens.color.inkMuted,
   },
 
-  oppCard: {
+  contactSearch: {
+    marginBottom: 14,
+  },
+
+  contactCard: {
     padding: 14,
   },
 
-  oppHeader: {
+  contactRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
   },
 
-  oppTextCol: {
-    flex: 1,
+  contactAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: tokens.color.brandSoft,
+    alignItems: "center",
+    justifyContent: "center",
   },
 
-  oppTitle: {
-    ...tokens.type.h3,
-    color: tokens.color.ink,
-  },
-
-  oppMeta: {
+  contactInitials: {
     ...tokens.type.caption,
-    color: tokens.color.inkMuted,
-    marginTop: 3,
+    fontWeight: "800",
+    color: tokens.color.brand,
   },
 
-  oppAmount: {
-    ...tokens.type.bodyStrong,
-    color: tokens.color.ink,
+  contactTextCol: {
+    flex: 1,
+    gap: 3,
   },
 
-  oppFooter: {
+  contactNameRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 7,
+  },
+
+  contactName: {
+    ...tokens.type.bodyStrong,
+    color: tokens.color.ink,
+    flexShrink: 1,
+  },
+
+  primaryChip: {
+    backgroundColor: tokens.color.brandSoft,
+    borderRadius: tokens.radius.pill,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+
+  primaryText: {
+    ...tokens.type.micro,
+    letterSpacing: 0,
+    color: tokens.color.brand,
+  },
+
+  contactOrg: {
+    ...tokens.type.caption,
+    color: tokens.color.inkMuted,
+  },
+
+  contactDetails: {
     marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: tokens.color.border,
+    gap: 7,
+  },
+
+  detailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  detailText: {
+    ...tokens.type.caption,
+    color: tokens.color.inkMuted,
+    flexShrink: 1,
+  },
+
+  openHint: {
+    ...tokens.type.micro,
+    letterSpacing: 0,
+    textTransform: "none",
+    color: tokens.color.inkFaint,
+    marginTop: 10,
+  },
+
+  moreRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 14,
+  },
+
+  moreText: {
+    ...tokens.type.caption,
+    color: tokens.color.inkFaint,
   },
 });

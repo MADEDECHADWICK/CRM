@@ -321,7 +321,11 @@ export function ReportsScreen() {
                         (customFrom ? new Date(customFrom.getTime()) : new Date()))
                   }
                   mode="date"
-                  display={Platform.OS === "ios" ? "spinner" : "default"}
+                  // "compact" (tappable grid) rather than a wheel, so
+                  // onValueChange fires once per tap instead of streaming
+                  // while the user scrolls — which is what makes the
+                  // auto-close below safe.
+                  display={Platform.OS === "ios" ? "compact" : "default"}
                   maximumDate={
                     picking === "from" && customTo ? customTo : undefined
                   }
@@ -335,8 +339,10 @@ export function ReportsScreen() {
                       if (customTo && date >= customTo) {
                         setCustomTo(null);
                       } else if (!customTo) {
-                        // Step through: From chosen → open To next.
+                        // Step through: From chosen → open To next. Keep the
+                        // picker mounted, this range needs two dates.
                         setPicking("to");
+                        return;
                       }
                     } else {
                       setCustomTo(date);
@@ -344,6 +350,10 @@ export function ReportsScreen() {
                         setCustomFrom(null);
                       }
                     }
+
+                    // Range complete (or no chaining needed) — collapse
+                    // instead of leaving the calendar hanging open.
+                    setPicking(null);
                   }}
                   onDismiss={() => setPicking(null)}
                 />

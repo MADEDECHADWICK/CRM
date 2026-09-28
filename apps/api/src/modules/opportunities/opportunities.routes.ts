@@ -3,17 +3,17 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth, AuthedRequest, opportunityScope } from "../../middleware/authorize";
 import { transitionOpportunity } from "./transitionOpportunity";
-import { REPORT_PERIODS, reportPeriodRange, customReportRange } from "@crm/core";
+import { REPORT_PERIODS, reportPeriodRange, customReportRange, STAGES, type Stage } from "@crm/core";
 
 export const opportunitiesRouter = Router();
 opportunitiesRouter.use(requireAuth);
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 
+// Derived from STAGES rather than hand-listed, so a newly added pipeline
+// stage is immediately valid here instead of being rejected with a 400.
 const listQuerySchema = z.object({
-  stage: z
-    .enum(["PROSPECT", "LEAD", "PROPOSAL", "WON", "LOST", "NO_REPLY", "DEFERRED"])
-    .optional(),
+  stage: z.enum(STAGES).optional(),
   q: z.string().optional(),
   period: z.enum(REPORT_PERIODS).optional(),
   from: z.string().datetime().optional(),
@@ -23,13 +23,15 @@ const listQuerySchema = z.object({
 });
 
 const transitionBodySchema = z.object({
-  toStage: z.enum(["PROSPECT", "LEAD", "PROPOSAL", "WON", "LOST", "NO_REPLY", "DEFERRED"]),
+  toStage: z.enum(STAGES),
   reason: z.string().min(1),
   amount: z.number().positive().optional(),
   revisitAt: z.string().datetime().optional(),
   lostReason: z.string().optional(),
 });
 
+// Deliberately narrower than the full stage list: a new opportunity can only
+// start life as a PROSPECT or a LEAD (BR-003/BR-004).
 const createBodySchema = z.object({
   title: z.string().min(1),
   organizationId: z.string().uuid(),
@@ -38,7 +40,7 @@ const createBodySchema = z.object({
   amount: z.number().positive().optional(),
   currency: z.string().optional(),
   ownerId: z.string().uuid().optional(),
-  stage: z.enum(["PROSPECT", "LEAD"]).optional(),
+  stage: z.enum(["PROSPECT", "LEAD"] satisfies readonly Stage[]).optional(),
 });
 
 const reassignBodySchema = z.object({

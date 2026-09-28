@@ -383,8 +383,12 @@ function TeamTotals({ breakdown }: { breakdown: ReportingBreakdown }) {
         </View>
         <View style={styles.metricItem}>
           <StageStat
+            // Count must match the value shown next to it, and that value
+            // covers proposals *and* ones awaiting feedback — so count both.
             label="Active prop."
-            count={totals.counts.PROPOSAL}
+            count={
+              totals.counts.PROPOSAL + totals.counts.AWAITING_FEEDBACK
+            }
             value={totals.activeProposalValue}
             color={tokens.color.warning}
             soft={tokens.color.warningSoft}
@@ -419,6 +423,13 @@ function BreakdownBody({ row }: BreakdownCardProps) {
       <View style={styles.pipelineStat}>
         <Text style={styles.pipelineStatLabel}>Proposals</Text>
         <Text style={styles.pipelineStatCount}>{row.counts.PROPOSAL}</Text>
+      </View>
+
+      <View style={styles.pipelineStat}>
+        <Text style={styles.pipelineStatLabel}>Awaiting</Text>
+        <Text style={styles.pipelineStatCount}>
+          {row.counts.AWAITING_FEEDBACK}
+        </Text>
       </View>
 
       <View style={styles.pipelineStat}>

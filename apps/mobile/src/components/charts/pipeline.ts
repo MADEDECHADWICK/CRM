@@ -6,6 +6,7 @@
 import {
   STAGE_COLORS,
   STAGE_LABELS,
+  STAGES,
   type Opportunity,
   type Stage,
 } from "@crm/core";
@@ -13,15 +14,10 @@ import {
 import type { DonutDatum } from "./DonutChart";
 import type { StageBarDatum } from "./StageBarChart";
 
-export const PIPELINE_ORDER: readonly Stage[] = [
-  "PROSPECT",
-  "LEAD",
-  "PROPOSAL",
-  "WON",
-  "LOST",
-  "NO_REPLY",
-  "DEFERRED",
-];
+// Read from STAGES so the charts can never silently omit a stage — the donut's
+// centre total is a sum over this list, so a missing entry would make the
+// headline number disagree with the real opportunity count.
+export const PIPELINE_ORDER: readonly Stage[] = STAGES;
 
 export type PipelineCount = { stage: Stage; count: number };
 

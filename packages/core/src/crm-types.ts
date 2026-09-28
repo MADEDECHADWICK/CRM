@@ -2,14 +2,37 @@ import type { ReportPeriod } from "./reporting";
 
 export type Role = "MARKETING_BD" | "PARTNER" | "MANAGER";
 
-export type Stage =
-  | "PROSPECT"
-  | "LEAD"
-  | "PROPOSAL"
-  | "WON"
-  | "LOST"
-  | "NO_REPLY"
-  | "DEFERRED";
+/**
+ * The single source of truth for the pipeline stages, in pipeline order.
+ * `Stage` is derived from this so the union can never drift from the list —
+ * and so API validators, report loops and UI ordering all read one array
+ * instead of hand-copied literals that silently go stale.
+ */
+export const STAGES = [
+  "PROSPECT",
+  "LEAD",
+  "PROPOSAL",
+  "AWAITING_FEEDBACK",
+  "WON",
+  "LOST",
+  "NO_REPLY",
+  "DEFERRED",
+] as const;
+
+export type Stage = (typeof STAGES)[number];
+
+/**
+ * Stages that represent live, undecided money. Used by reporting so a deal
+ * awaiting client feedback still counts toward the pipeline forecast —
+ * it is genuinely still in play.
+ */
+export const ACTIVE_PROPOSAL_STAGES: readonly Stage[] = [
+  "PROPOSAL",
+  "AWAITING_FEEDBACK",
+];
+
+/** Stages that close an opportunity out for good. */
+export const TERMINAL_STAGES: readonly Stage[] = ["WON", "LOST", "NO_REPLY"];
 
 export type FollowupStatus = "PENDING" | "COMPLETED" | "CANCELLED";
 
@@ -30,6 +53,28 @@ export type Organization = {
   phone?: string | null;
   address?: string | null;
   description?: string | null;
+};
+
+// A named person at a client organization. Distinct from
+// Organization.email / phone, which are the generic company details —
+// this is the individual you actually email or call.
+export type Contact = {
+  id: string;
+  name: string;
+  title?: string | null;
+  department?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  isPrimary: boolean;
+  notes?: string | null;
+  organizationId: string;
+  organization?: Organization;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type OrganizationWithContacts = Organization & {
+  contacts?: Contact[];
 };
 
 export type Opportunity = {
@@ -75,8 +120,12 @@ export type ReportingSummary = {
   totalProspects: number;
   totalLeads: number;
   totalProposals: number;
+  /** Proposals sent to the client, still inside their response window. */
+  totalAwaitingFeedback?: number;
   totalClients: number;
+  /** Value of everything still undecided (proposal + awaiting feedback). */
   activeProposalValue: number;
+  activeProposalCount?: number;
   wonValue: number;
   wonCount?: number;
   lostValue: number;
