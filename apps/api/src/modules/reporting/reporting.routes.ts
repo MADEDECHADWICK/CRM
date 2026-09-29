@@ -11,11 +11,19 @@ import {
   reportPeriodRange,
   customReportRange,
   ACTIVE_PROPOSAL_STAGES,
+  PROPOSAL_STAGES,
   STAGES,
+  ragFor,
+  isPaidSource,
+  sourceLabel,
+  summariseTurnaround,
   type Stage,
   type StageCounts,
   type BreakdownRow,
   type ReportingBreakdown,
+  type SourceAttributionRow,
+  type SourceAttributionReport,
+  type LeadSource,
 } from "@crm/core";
 
 export const reportingRouter = Router();
@@ -344,6 +352,281 @@ reportingRouter.get("/breakdown", async (req: AuthedRequest, res) => {
     res.status(500).json({
       success: false,
       error: { code: "REPORTING_FAILED", message: "Unable to build report." },
+    });
+  }
+});
+
+// ── Lead-source attribution (BR-018) ──
+
+/**
+ * Where leads come from, and which channels actually convert.
+ *
+ * The period window filters on leadReceivedAt, not stageEnteredAt. Channel
+ * performance is a question about when the lead ARRIVED, so a deal raised in
+ * March and still sitting in PROPOSAL belongs to March's cohort. Using the
+ * current-stage date instead would quietly move every slow deal into
+ * whichever period happens to contain today, and a channel that looks
+ * productive would be one that merely happens to convert quickly.
+ */
+reportingRouter.get("/sources", async (req: AuthedRequest, res) => {
+  try {
+    if (!canAccessReporting(req.user)) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: "FORBIDDEN",
+          message: "Your role is not allowed to access reports.",
+        },
+      });
+    }
+
+    const query = summaryQuerySchema.safeParse(req.query);
+    if (!query.success) {
+      return res.status(400).json({
+        success: false,
+        error: { code: "VALIDATION_ERROR", message: query.error.message },
+      });
+    }
+
+    const scope = opportunityScope(req.user);
+    const range =
+      query.data.period === "custom"
+        ? customReportRange(query.data.from, query.data.to)
+        : { range: reportPeriodRange(query.data.period) };
+
+    if ("error" in range) {
+      return res.status(400).json({
+        success: false,
+        error: { code: "VALIDATION_ERROR", message: range.error },
+      });
+    }
+
+    const where = {
+      ...scope,
+      ...(range.range
+        ? { leadReceivedAt: { gte: range.range.from, lte: range.range.to } }
+        : {}),
+    };
+
+    const grouped = await prisma.opportunity.groupBy({
+      by: ["leadSource", "leadSourceNote", "stage"],
+      _count: { _all: true },
+      _sum: { amount: true },
+      where,
+    });
+
+    type Bucket = {
+      leads: number;
+      reachedProposal: number;
+      won: number;
+      wonValue: number;
+    };
+    const buckets = new Map<string, Bucket>();
+
+    for (const g of grouped) {
+      // Grouped by note as well as source so the OTHER escape hatch stays
+      // legible: "OTHER: Nakuru AGM trade fair" is a real answer that can be
+      // promoted into its own channel, whereas one merged OTHER bucket would
+      // stay useless forever.
+      const key = `${g.leadSource}::${g.leadSourceNote ?? ""}`;
+      const bucket = buckets.get(key) ?? {
+        leads: 0,
+        reachedProposal: 0,
+        won: 0,
+        wonValue: 0,
+      };
+
+      const count = g._count._all;
+      bucket.leads += count;
+      // PROSPECT means entered but not yet qualified. Excluding it from the
+      // denominator stops a channel's rate being depressed by how long the
+      // firm takes to qualify, which is a number about the firm's process
+      // rather than about the channel.
+      if (g.stage !== "PROSPECT") bucket.reachedProposal += count;
+      if (g.stage === "WON") {
+        bucket.won += count;
+        bucket.wonValue += g._sum.amount != null ? Number(g._sum.amount) : 0;
+      }
+      buckets.set(key, bucket);
+    }
+
+    const rows: SourceAttributionRow[] = [...buckets.entries()].map(([key, b]) => {
+      const [source, ...noteParts] = key.split("::");
+      const note = noteParts.join("::") || null;
+      const typed = source as LeadSource;
+      return {
+        source: typed,
+        label: sourceLabel(typed),
+        note,
+        leads: b.leads,
+        reachedProposal: b.reachedProposal,
+        won: b.won,
+        proposalToWinRate: b.reachedProposal ? b.won / b.reachedProposal : null,
+        overallConversionRate: b.leads ? b.won / b.leads : null,
+        wonValue: b.wonValue,
+        paid: isPaidSource(typed),
+      };
+    });
+
+    // Strongest conversion first — a reader scanning the table wants the
+    // answer at the top, not alphabetised by enum value.
+    rows.sort((a, b) => {
+      const ar = a.proposalToWinRate ?? -1;
+      const br = b.proposalToWinRate ?? -1;
+      if (ar !== br) return br - ar;
+      return b.leads - a.leads;
+    });
+
+    const totals = rows.reduce(
+      (acc, r) => {
+        acc.leads += r.leads;
+        acc.reachedProposal += r.reachedProposal;
+        acc.won += r.won;
+        acc.wonValue += r.wonValue;
+        return acc;
+      },
+      { leads: 0, reachedProposal: 0, won: 0, wonValue: 0 }
+    );
+
+    const data: SourceAttributionReport = {
+      period: query.data.period,
+      periodFrom: range.range?.from.toISOString() ?? null,
+      periodTo: range.range?.to.toISOString() ?? null,
+      rows,
+      totals: {
+        ...totals,
+        proposalToWinRate: totals.reachedProposal
+          ? totals.won / totals.reachedProposal
+          : null,
+        overallConversionRate: totals.leads ? totals.won / totals.leads : null,
+      },
+      unattributedCount: await prisma.opportunity.count({
+        where: { ...where, leadSource: "OTHER" },
+      }),
+    };
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error("Source attribution error:", error);
+    res.status(500).json({
+      success: false,
+      error: { code: "REPORTING_FAILED", message: "Unable to build source report." },
+    });
+  }
+});
+
+// ── Proposal turnaround and deadline discipline (BR-016 … BR-019) ──
+reportingRouter.get("/proposals", async (req: AuthedRequest, res) => {
+  try {
+    if (!canAccessReporting(req.user)) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: "FORBIDDEN",
+          message: "Your role is not allowed to access reports.",
+        },
+      });
+    }
+
+    const query = summaryQuerySchema.safeParse(req.query);
+    if (!query.success) {
+      return res.status(400).json({
+        success: false,
+        error: { code: "VALIDATION_ERROR", message: query.error.message },
+      });
+    }
+
+    const scope = opportunityScope(req.user);
+    const range =
+      query.data.period === "custom"
+        ? customReportRange(query.data.from, query.data.to)
+        : { range: reportPeriodRange(query.data.period) };
+
+    if ("error" in range) {
+      return res.status(400).json({
+        success: false,
+        error: { code: "VALIDATION_ERROR", message: range.error },
+      });
+    }
+
+    const periodWhere = range.range
+      ? { stageEnteredAt: { gte: range.range.from, lte: range.range.to } }
+      : {};
+
+    // Proposals in play, so the breach counts share a population with the RAG
+    // distribution below. LEAD is included because deadlines are issued from
+    // qualification onward, and a lead can breach before it is a proposal.
+    const stageWhere = { stage: { in: [...PROPOSAL_STAGES, "LEAD"] as Stage[] } };
+    const breachWhere = { ...scope, ...periodWhere, ...stageWhere };
+
+    const [samples, breachedCount, openNoteCount, escalatedNoteCount, ragRows] =
+      await Promise.all([
+        prisma.opportunity.findMany({
+          where: { ...scope, ...periodWhere, proposalSubmittedAt: { not: null } },
+          select: {
+            leadReceivedAt: true,
+            proposalSubmittedAt: true,
+            proposalDueAt: true,
+          },
+        }),
+        prisma.opportunity.count({
+          where: { ...breachWhere, proposalBreachedAt: { not: null } },
+        }),
+        prisma.opportunity.count({
+          where: { ...breachWhere, breachNoteRequired: true, breachNoteClearedAt: null },
+        }),
+        prisma.opportunity.count({
+          where: {
+            ...breachWhere,
+            breachNoteRequired: true,
+            breachNoteClearedAt: null,
+            breachNoteDueAt: { lte: new Date() },
+          },
+        }),
+        prisma.opportunity.findMany({
+          where: { ...scope, ...periodWhere, ...stageWhere },
+          select: {
+            stage: true,
+            proposalDueAt: true,
+            proposalSubmittedAt: true,
+            amount: true,
+          },
+        }),
+      ]);
+
+    // Tallied in JS from the same helper the list endpoint uses, rather than
+    // in SQL: the classification depends on the current clock, and a SQL
+    // date_trunc would reintroduce the timezone ambiguity the RAG design
+    // exists to avoid.
+    const distribution: Record<string, { count: number; value: number }> = {};
+    for (const row of ragRows) {
+      const status = ragFor(row).status;
+      const entry = distribution[status] ?? { count: 0, value: 0 };
+      entry.count += 1;
+      entry.value += row.amount != null ? Number(row.amount) : 0;
+      distribution[status] = entry;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        period: query.data.period,
+        periodFrom: range.range?.from.toISOString() ?? null,
+        periodTo: range.range?.to.toISOString() ?? null,
+        turnaround: summariseTurnaround(samples, {
+          breachedCount,
+          openNoteCount,
+          escalatedNoteCount,
+        }),
+        ragDistribution: distribution,
+        inFlightCount: ragRows.length,
+      },
+    });
+  } catch (error) {
+    console.error("Proposal reporting error:", error);
+    res.status(500).json({
+      success: false,
+      error: { code: "REPORTING_FAILED", message: "Unable to build proposal report." },
     });
   }
 });

@@ -1,4 +1,8 @@
 import type { ReportPeriod } from "./reporting";
+import type { LeadSource } from "./lead-source";
+import type { RagResult } from "./rag";
+
+export type { LeadSource };
 
 export type Role = "MARKETING_BD" | "PARTNER" | "MANAGER";
 
@@ -13,6 +17,7 @@ export const STAGES = [
   "LEAD",
   "PROPOSAL",
   "AWAITING_FEEDBACK",
+  "NOT_SUBMITTED",
   "WON",
   "LOST",
   "NO_REPLY",
@@ -25,10 +30,22 @@ export type Stage = (typeof STAGES)[number];
  * Stages that represent live, undecided money. Used by reporting so a deal
  * awaiting client feedback still counts toward the pipeline forecast —
  * it is genuinely still in play.
+ *
+ * NOT_SUBMITTED is in PROPOSAL_STAGES but deliberately not here: a missed
+ * drafting deadline is an internal process failure, not money sitting with a
+ * client, so counting it as active pipeline value would overstate the
+ * forecast. It is still visible on the pipeline — it is simply not valued.
  */
 export const ACTIVE_PROPOSAL_STAGES: readonly Stage[] = [
   "PROPOSAL",
   "AWAITING_FEEDBACK",
+];
+
+/** Every stage that represents a proposal that exists but is not yet sent. */
+export const PROPOSAL_STAGES: readonly Stage[] = [
+  "PROPOSAL",
+  "AWAITING_FEEDBACK",
+  "NOT_SUBMITTED",
 ];
 
 /** Stages that close an opportunity out for good. */
@@ -97,8 +114,35 @@ export type Opportunity = {
   wonAt?: string | null;
   lostAt?: string | null;
 
+  // --- Proposal drafting lifecycle (BR-016 … BR-019) ---
+
+  /** Where the lead came from. Mandatory — no default, ever. */
+  leadSource: LeadSource;
+  /** Free text describing the source; required only when source = OTHER. */
+  leadSourceNote?: string | null;
+  /** When the lead itself arrived, which may predate the typed record. */
+  leadReceivedAt: string;
+  /** The BD-issued INTERNAL deadline for having the draft ready. */
+  proposalDueAt?: string | null;
+  /** The BD who issued that deadline. */
+  proposalDueSetById?: string | null;
+  /** When the deadline was issued, as distinct from when it falls due. */
+  proposalDueSetAt?: string | null;
+  /** When the finished proposal actually went to the client. */
+  proposalSubmittedAt?: string | null;
+  /** When the system moved this deal to NOT_SUBMITTED. */
+  proposalBreachedAt?: string | null;
+  /** Whether the assignee still owes an explanation for the missed deadline. */
+  breachNoteRequired: boolean;
+  /** When that explanation is due — owed after the flag, not at it. */
+  breachNoteDueAt?: string | null;
+  /** When the explanation was given and the debt cleared. */
+  breachNoteClearedAt?: string | null;
+
   organization?: Organization;
   department?: Department;
+  /** Computed on the server, never stored (see rag.ts). */
+  rag?: RagResult;
 };
 
 export type Followup = {
@@ -193,6 +237,11 @@ export type StageHistoryEntry = {
   toStage: Stage;
   reason: string;
   changedAt: string;
+  /** A person, or the automated deadline sweep. */
+  actorType: "USER" | "SYSTEM";
+  /** Why the system acted, present only on SYSTEM entries. */
+  systemReason?: string | null;
+  changedBy?: { id: string; name: string } | null;
 };
 
 export type OpportunityNote = {

@@ -47,6 +47,18 @@ enum Stage {
   /// window in which to respond, so this is not yet an outcome.
   AWAITING_FEEDBACK
 
+  /// The BD-issued drafting deadline passed and nothing was submitted.
+  ///
+  /// Set by the system, never by a user, and deliberately RECOVERABLE —
+  /// a proposal that was 90% written should not be destroyed permanently
+  /// because a date slipped. Going back to PROPOSAL is a normal, expected
+  /// recovery and is the single most common transition out of this stage.
+  ///
+  /// Arriving here also raises a note debt (see Opportunity.breachNoteRequired):
+  /// the assignee owes an explanation, but after the fact, not at the moment
+  /// the system acted on their behalf (BR-019).
+  NOT_SUBMITTED
+
   /// The opportunity was successfully converted into business.
   WON
 
@@ -69,6 +81,60 @@ enum FollowupStatus {
   PENDING
   COMPLETED
   CANCELLED
+}
+
+/// Where a lead came from.
+///
+/// Required on every opportunity (BR-018). Channel attribution is what makes
+/// marketing spend measurable — without it the firm is guessing which channels
+/// produce revenue. `OTHER` exists so an unexpected channel is still recorded
+/// as a real answer rather than forcing users to leave the field blank or
+/// abandon the form.
+enum LeadSource {
+  /// An existing client or business contact referred them.
+  REFERRAL
+
+  /// A Partner inside the firm made the introduction.
+  PARTNER_REFERRAL
+
+  /// Walked into the firm's premises.
+  WALK_IN
+
+  /// Enquiry through the firm's own website.
+  WEBSITE
+
+  /// Social media platforms.
+  SOCIAL_MEDIA
+
+  /// A specific marketing campaign the firm funded.
+  MARKETING_CAMPAIGN
+
+  /// A trade show, seminar or conference.
+  EXHIBITION
+
+  /// A public or private tender the firm bid for.
+  TENDER
+
+  /// Firm-initiated outbound prospecting.
+  COLD_OUTREACH
+
+  /// A real channel that is none of the above — described in leadSourceNote.
+  OTHER
+}
+
+/// Who performed a stage transition.
+///
+/// Almost every transition is a person making a decision and BR-010 requires
+/// their reason. The overdue sweep is not: a scheduled job moved the deal, so
+/// there is no human to attribute and no reason to give. Without this the
+/// audit trail — the system's best feature — could not record the one
+/// transition that most needs recording.
+enum ActorType {
+  /// A signed-in user acting deliberately.
+  USER
+
+  /// The automated deadline sweep.
+  SYSTEM
 }
 
 /// Represents the kind of follow-up activity (BRD / ERD).
@@ -117,7 +183,14 @@ model User {
   /// may be transferred between users.
   ownerOpportunities  Opportunity[]       @relation("OpportunityOwner")
   /// Stage changes performed by this user.
-  stageHistoryEntries StageHistoryEntry[]
+  stageHistoryEntries StageHistoryEntry[] @relation("StageChangedBy")
+
+  /// Deadlines this user issued to other people (BR-016).
+  ///
+  /// Kept as a real relation rather than a bare id so "every deadline Grace
+  /// has set, and how those deals turned out" is a query, not a report
+  /// somebody reconstructs by hand.
+  deadlinesIssued      Opportunity[]       @relation("OpportunityDeadlineSetBy")
 
   /// Notes created by this user.
   notes Note[]
@@ -385,6 +458,78 @@ model Opportunity {
   /// reporting instead of relying on createdAt or updatedAt.
   stageEnteredAt DateTime @default(now())
 
+  /// Where this lead came from (BR-018).
+  ///
+  /// Mandatory at creation, with no database default on purpose. A default
+  /// would let a buggy or forgotten write path quietly record OTHER and the
+  /// channel data would be quietly, permanently wrong. Backfilled as OTHER
+  /// during migration because "we did not record it" is a more honest value
+  /// than guessing a channel after the fact.
+  leadSource LeadSource
+
+  /// Free text describing the lead source, required only when
+  /// leadSource = OTHER so that bucket is never empty.
+  leadSourceNote String?
+
+  /// When the lead itself arrived, as distinct from when the record was typed
+  /// in. Defaults to createdAt but is separately settable because BD often
+  /// backfills a lead days after the conversation happened, and the whole
+  /// velocity analysis is wrong if that distortion is not corrected.
+  leadReceivedAt DateTime @default(now())
+
+  /// The INTERNAL deadline the BD set for drafting this proposal (BR-016).
+  ///
+  /// This is deliberately NOT the date the proposal goes to the client. It is
+  /// the date by which the draft must be finished, reviewed and amended, so
+  /// that BD and marketing still have room to make changes before submission.
+  /// Conflating the two destroys the only measurement that shows how long
+  /// the firm actually takes to write a proposal.
+  ///
+  /// Drives the RAG indicator and the overdue sweep. Null means no deadline
+  /// has been issued yet, which is a legitimate state — not every lead is
+  /// being actively drafted.
+  proposalDueAt DateTime?
+
+  /// The BD who issued the deadline.
+  ///
+  /// Recorded so "who gave this person six days, and when?" is answerable —
+  /// the accountability the whole deadline system rests on.
+  proposalDueSetById String?
+
+  /// Relationship to the BD who issued the deadline.
+  proposalDueSetBy    User?     @relation("OpportunityDeadlineSetBy", fields: [proposalDueSetById], references: [id], onDelete: SetNull)
+
+  /// When the deadline was issued. Distinct from proposalDueAt so a deadline
+  /// given today for next month shows as six days' notice, not a month.
+  proposalDueSetAt DateTime?
+
+  /// When the finished proposal actually went to the client (BR-016).
+  ///
+  /// Stamped automatically the moment the deal moves to AWAITING_FEEDBACK —
+  /// that transition IS the act of sending, so it is the only trustworthy
+  /// moment to record. Together with proposalDueAt this yields
+  /// "days from deadline issued to proposal sent", the core BD metric.
+  proposalSubmittedAt DateTime?
+
+  /// When the system moved this deal to NOT_SUBMITTED.
+  proposalBreachedAt DateTime?
+
+  /// Whether the assignee still owes an explanation for a missed deadline
+  /// (BR-019).
+  ///
+  /// Raised by the system the moment it flags a missed deadline, and cleared
+  /// only when the assignee actually writes the note. This is the honest
+  /// reading of the requirement: the flag is automatic, but the obligation to
+  /// account for it is real and is tracked separately.
+  breachNoteRequired Boolean @default(false)
+
+  /// When the breach explanation is due — the note is owed *after* the flag,
+  /// not at the instant the system acted on the assignee's behalf.
+  breachNoteDueAt DateTime?
+
+  /// When the assignee cleared the breach note debt.
+  breachNoteClearedAt DateTime?
+
   /// Set only when stage = DEFERRED.
   ///
   /// BR-008 requires a future revisit date when deferring, and the
@@ -463,6 +608,13 @@ model Opportunity {
   @@index([departmentId, stage])
   /// Useful for organization-specific opportunity views.
   @@index([organizationId, stage])
+  /// Drives the overdue sweep: "anything in a drafting stage whose internal
+  /// deadline has passed and that was never submitted".
+  @@index([stage, proposalDueAt])
+  /// Supports the RAG column in list views without loading every row first.
+  @@index([proposalDueAt])
+  /// Channel attribution reporting (BR-018).
+  @@index([leadSource])
 }
 
 /// Records every stage transition made to an Opportunity.
@@ -497,10 +649,29 @@ model StageHistoryEntry {
   toStage Stage
 
   /// User who performed the stage change.
-  changedById String
+  ///
+  /// Nullable only for ActorType.SYSTEM: the automated deadline sweep has no
+  /// human actor. Every user-initiated transition still has one, so BR-010's
+  /// mandatory reason keeps being enforced on exactly the transitions where
+  /// a person is genuinely making a decision.
+  changedById String?
 
   /// Relationship to the user who changed the stage.
-  changedBy User @relation(fields: [changedById], references: [id], onDelete: Restrict)
+  changedBy User?  @relation("StageChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+
+  /// Whether a person or the automated sweep made this transition.
+  ///
+  /// Read together with changedById, never instead of it: a USER row with no
+  /// actor, or a SYSTEM row that somehow has one, is corrupt data and is
+  /// rejected in the API layer rather than quietly stored.
+  actorType ActorType @default(USER)
+
+  /// Why the system acted, when actorType = SYSTEM.
+  ///
+  /// Records the fact that drove the automated decision ("BD drafting
+  /// deadline of 2026-10-01 passed with nothing submitted") so an automatic
+  /// transition is as explainable to a human reader as a manual one.
+  systemReason String?
 
   /// Optional explanation for the stage transition.
   ///

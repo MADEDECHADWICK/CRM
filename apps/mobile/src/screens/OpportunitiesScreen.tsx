@@ -13,12 +13,18 @@ import {
 
 import {
   ALLOWED_TRANSITIONS,
+  ApiError,
   createApiClient,
   formatAmount,
+  LEAD_SOURCES,
+  LEAD_SOURCE_LABELS,
+  RAG_LABELS,
   type DepartmentDetail,
+  type LeadSource,
   type Opportunity,
   type OpportunityDetail,
   type Organization,
+  type RagStatus,
   type Stage,
   type UserLite,
   STAGE_COLORS,
@@ -37,6 +43,7 @@ import {
   IconButton,
   IconSet,
   InfoRow,
+  RagBadge,
   Screen,
   SearchBar,
   Section,
@@ -56,14 +63,21 @@ type FilterKey =
   | "lead"
   | "proposal"
   | "awaiting"
-  | "deferred";
+  | "notSubmitted"
+  | "deferred"
+  | "overdue";
 
 const FILTER_STAGE: Partial<Record<FilterKey, Stage>> = {
   prospect: "PROSPECT",
   lead: "LEAD",
   proposal: "PROPOSAL",
   awaiting: "AWAITING_FEEDBACK",
+  notSubmitted: "NOT_SUBMITTED",
   deferred: "DEFERRED",
+};
+
+const FILTER_RAG: Partial<Record<FilterKey, RagStatus>> = {
+  overdue: "OVERDUE",
 };
 
 // Short label for the chip — the full "Awaiting Feedback" would crowd the row.
@@ -73,8 +87,21 @@ const FILTER_LABEL: Record<FilterKey, string> = {
   lead: "Lead",
   proposal: "Proposal",
   awaiting: "Awaiting",
+  notSubmitted: "Not sent",
   deferred: "Deferred",
+  overdue: "Overdue",
 };
+
+const FILTER_ORDER: readonly FilterKey[] = [
+  "all",
+  "prospect",
+  "lead",
+  "proposal",
+  "awaiting",
+  "notSubmitted",
+  "deferred",
+  "overdue",
+] as const;
 
 function fmtDate(iso: string): string {
   const date = new Date(iso);
@@ -122,27 +149,34 @@ export function OpportunitiesScreen() {
   }
 
   const counts = useMemo(() => {
-    const make = (stage: Stage | null) =>
-      stage === null
-        ? opportunities.length
-        : opportunities.filter((item) => item.stage === stage).length;
+    const byStage = (stage: Stage) =>
+      opportunities.filter((item) => item.stage === stage).length;
 
     return {
-      all: make(null),
-      prospect: make("PROSPECT"),
-      lead: make("LEAD"),
-      proposal: make("PROPOSAL"),
-      awaiting: make("AWAITING_FEEDBACK"),
-      deferred: make("DEFERRED"),
+      all: opportunities.length,
+      prospect: byStage("PROSPECT"),
+      lead: byStage("LEAD"),
+      proposal: byStage("PROPOSAL"),
+      awaiting: byStage("AWAITING_FEEDBACK"),
+      notSubmitted: byStage("NOT_SUBMITTED"),
+      deferred: byStage("DEFERRED"),
+      // Computed from the server's rag value rather than recomputed on the
+      // phone: the deadline clock is the server's, and a locally recomputed
+      // countdown could disagree with the value every other client shows.
+      overdue: opportunities.filter(
+        (item) => item.rag?.status === "OVERDUE"
+      ).length,
     };
   }, [opportunities]);
 
   const filtered = useMemo(() => {
     const stage = FILTER_STAGE[filter];
+    const rag = FILTER_RAG[filter];
     const lower = query.trim().toLowerCase();
 
     return opportunities.filter((item) => {
       if (stage && item.stage !== stage) return false;
+      if (rag && item.rag?.status !== rag) return false;
 
       if (!lower) return true;
 
@@ -206,9 +240,7 @@ export function OpportunitiesScreen() {
         <Segmented
           value={filter}
           onChange={setFilter}
-          options={(
-            ["all", "prospect", "lead", "proposal", "awaiting", "deferred"] as const
-          ).map((key) => ({
+          options={FILTER_ORDER.map((key) => ({
             key,
             label: FILTER_LABEL[key],
             count: counts[key],
@@ -236,8 +268,12 @@ export function OpportunitiesScreen() {
         {filtered.length === 0 ? (
           <EmptyState
             icon={IconSet.Search}
-            title="Nothing matches"
-            subtitle="Try a different filter or search term."
+            title={counts.all === 0 ? "No deals yet" : "Nothing matches"}
+            subtitle={
+              counts.all === 0
+                ? "Add your first deal to start tracking the pipeline."
+                : "Try a different filter or search term."
+            }
           />
         ) : (
           filtered.map((opportunity) => (
@@ -278,6 +314,14 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [departmentId, setDepartmentId] = useState<string | null>(null);
   const [ownerId, setOwnerId] = useState<string | null>(null);
+
+  // BR-018: the source is mandatory and has no default, so the picker starts
+  // empty. Preselecting something would reintroduce exactly the silent
+  // unattributed lead the reporting exists to eliminate.
+  const [leadSource, setLeadSource] = useState<LeadSource | null>(null);
+  const [leadSourceNote, setLeadSourceNote] = useState("");
+  const [leadReceivedAt, setLeadReceivedAt] = useState<Date | null>(null);
+
   const [submitting, setSubmitting] = useState(false);
 
   const owners = useMemo(
@@ -335,6 +379,24 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
       );
       return;
     }
+    if (!leadSource) {
+      Alert.alert(
+        "Where did this lead come from?",
+        "Every deal needs a source — it is what makes the channel reports worth reading."
+      );
+      return;
+    }
+    if (leadSource === "OTHER" && !leadSourceNote.trim()) {
+      Alert.alert(
+        "Describe the source",
+        "Choose 'Other' means describing it — a single unexplained 'Other' is no better than a blank."
+      );
+      return;
+    }
+    if (leadReceivedAt && leadReceivedAt.getTime() > Date.now()) {
+      Alert.alert("Invalid date", "A lead cannot have arrived in the future.");
+      return;
+    }
 
     const parsedAmount = amount.trim() ? Number(amount) : null;
     if (amount.trim() && (!Number.isFinite(parsedAmount) || parsedAmount! <= 0)) {
@@ -353,6 +415,15 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
           departmentId,
           ownerId,
           stage,
+          leadSource,
+          ...(leadSource === "OTHER" && leadSourceNote.trim()
+            ? { leadSourceNote: leadSourceNote.trim() }
+            : {}),
+          // Omitted rather than defaulted client-side so the server's
+          // "arrived now" default stays the single definition of it.
+          ...(leadReceivedAt
+            ? { leadReceivedAt: toNoonUTC(leadReceivedAt).toISOString() }
+            : {}),
           ...(parsedAmount != null ? { amount: parsedAmount } : {}),
           ...(currency.trim() ? { currency: currency.trim() } : {}),
         }),
@@ -472,6 +543,41 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
             </View>
           </View>
 
+          <Text style={styles.formLabel}>
+            How did this lead reach us? (required)
+          </Text>
+          <View style={styles.chipWrap}>
+            {LEAD_SOURCES.map((source) => (
+              <Chip
+                key={source}
+                label={LEAD_SOURCE_LABELS[source]}
+                selected={leadSource === source}
+                onPress={() =>
+                  setLeadSource((current) =>
+                    current === source ? null : source
+                  )
+                }
+              />
+            ))}
+          </View>
+
+          {leadSource === "OTHER" ? (
+            <TextFieldForm
+              label="Describe the source"
+              value={leadSourceNote}
+              onChangeText={setLeadSourceNote}
+              placeholder="e.g. Kenya Accountants Association member"
+            />
+          ) : null}
+
+          <DateField
+            label="Lead received (optional)"
+            value={leadReceivedAt}
+            onChange={setLeadReceivedAt}
+            maximumDate={new Date()}
+            hint="Leave blank if this is today's lead. Backdate it if the deal has been in the diary for a while — the velocity reports measure from the first conversation."
+          />
+
           <Button
             title="Add deal"
             onPress={submit}
@@ -487,6 +593,7 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
 
 function PipelineCard({ opportunity, onPress }: PipelineCardProps) {
   const stageColors = STAGE_COLORS[opportunity.stage];
+  const owedBreachNote = opportunity.breachNoteRequired;
 
   return (
     <Card onPress={onPress} style={styles.pipelineCard}>
@@ -506,6 +613,15 @@ function PipelineCard({ opportunity, onPress }: PipelineCardProps) {
               {opportunity.organization?.name ?? "Unknown organization"}
             </Text>
           </View>
+
+          <View style={styles.sourceRow}>
+            <Text style={styles.sourceText} numberOfLines={1}>
+              {LEAD_SOURCE_LABELS[opportunity.leadSource]}
+              {opportunity.leadSource === "OTHER" && opportunity.leadSourceNote
+                ? ` · ${opportunity.leadSourceNote}`
+                : ""}
+            </Text>
+          </View>
         </View>
 
         <View style={styles.pipelineStageWrap}>
@@ -516,6 +632,20 @@ function PipelineCard({ opportunity, onPress }: PipelineCardProps) {
               : "—"}
           </Text>
         </View>
+      </View>
+
+      <View style={styles.pipelineRagRow}>
+        <RagBadge rag={opportunity.rag} />
+        {owedBreachNote ? (
+          <View style={styles.owePill}>
+            <Icon
+              name={IconSet.Warning}
+              size={11}
+              color={tokens.color.danger}
+            />
+            <Text style={styles.owePillText}>Explanation owed</Text>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.pipelineFooter}>
@@ -553,9 +683,28 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
   const [lostReason, setLostReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // BR-020 completeness gate. The server returns the specific outstanding
+  // fields on rejection; they are held here so the user gets a checklist
+  // instead of a sentence that tells them a count but not which fields.
+  const [missingFields, setMissingFields] = useState<{
+    field: string;
+    message: string;
+    scope: "ORGANIZATION" | "CONTACT";
+  }[]>([]);
+
   // Note form
   const [noteBody, setNoteBody] = useState("");
   const [noteBusy, setNoteBusy] = useState(false);
+
+  // BR-017 proposal drafting deadline
+  const [deadlineOpen, setDeadlineOpen] = useState(false);
+  const [deadlineDate, setDeadlineDate] = useState<Date | null>(null);
+  const [deadlineBusy, setDeadlineBusy] = useState(false);
+
+  // BR-019 post-breach explanation
+  const [breachNoteOpen, setBreachNoteOpen] = useState(false);
+  const [breachExplanation, setBreachExplanation] = useState("");
+  const [breachBusy, setBreachBusy] = useState(false);
 
   // Reassign owner form (BD only)
   const [owners, setOwners] = useState<UserLite[]>([]);
@@ -701,10 +850,19 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
       resetForm();
       await loadDetail();
     } catch (error) {
-      Alert.alert(
-        "Unable to move deal",
-        error instanceof Error ? error.message : "The transition was rejected."
-      );
+      // The completeness gate is the one rejection with a useful remedy, so
+      // it gets a rendered checklist rather than an alert. Everything else
+      // falls back to the plain message.
+      if (error instanceof ApiError && error.missingFields.length > 0) {
+        setMissingFields(error.missingFields);
+        setTarget(null);
+      } else {
+        setMissingFields([]);
+        Alert.alert(
+          "Unable to move deal",
+          error instanceof Error ? error.message : "The transition was rejected."
+        );
+      }
     } finally {
       setSubmitting(false);
     }
@@ -716,6 +874,86 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
     setAmount("");
     setRevisitAt(null);
     setLostReason("");
+    setMissingFields([]);
+  }
+
+  async function saveDeadline() {
+    if (!token || !detail || !deadlineDate) return;
+
+    if (deadlineDate.getTime() <= Date.now()) {
+      Alert.alert(
+        "Pick a future date",
+        "A drafting deadline that has already passed would flag the deal as overdue the moment you save it."
+      );
+      return;
+    }
+
+    try {
+      setDeadlineBusy(true);
+      // End of day, not start: a deadline is "have the draft ready by
+      // then", and noon-UTC anchoring keeps the calendar day from shifting
+      // backwards in a positive UTC offset.
+      const dueAt = new Date(deadlineDate);
+      dueAt.setHours(23, 59, 0, 0);
+
+      await apiFetch(`/opportunities/${detail.id}/deadline`, token, {
+        method: "POST",
+        body: JSON.stringify({ dueAt: dueAt.toISOString() }),
+      });
+
+      setDeadlineOpen(false);
+      setDeadlineDate(null);
+      await loadDetail();
+    } catch (error) {
+      Alert.alert(
+        "Unable to set deadline",
+        error instanceof Error ? error.message : "Please try again."
+      );
+    } finally {
+      setDeadlineBusy(false);
+    }
+  }
+
+  async function clearDeadline() {
+    if (!token || !detail) return;
+
+    try {
+      setDeadlineBusy(true);
+      await apiFetch(`/opportunities/${detail.id}/deadline`, token, {
+        method: "DELETE",
+      });
+      await loadDetail();
+    } catch (error) {
+      Alert.alert(
+        "Unable to clear deadline",
+        error instanceof Error ? error.message : "Please try again."
+      );
+    } finally {
+      setDeadlineBusy(false);
+    }
+  }
+
+  async function saveBreachNote() {
+    if (!token || !detail || !breachExplanation.trim()) return;
+
+    try {
+      setBreachBusy(true);
+      await apiFetch(`/opportunities/${detail.id}/breach-note`, token, {
+        method: "POST",
+        body: JSON.stringify({ explanation: breachExplanation.trim() }),
+      });
+
+      setBreachNoteOpen(false);
+      setBreachExplanation("");
+      await loadDetail();
+    } catch (error) {
+      Alert.alert(
+        "Unable to record explanation",
+        error instanceof Error ? error.message : "Please try again."
+      );
+    } finally {
+      setBreachBusy(false);
+    }
   }
 
   async function addNote() {
@@ -763,6 +1001,24 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
   const followUpLabel = followUpOptional ? "Follow-up date (optional)" : "Revisit date";
   const needsLostReason = target === "LOST";
 
+  // A deadline is only meaningful while the draft is still being written, so
+  // the control hides itself once the proposal is out. NOT_SUBMITTED stays
+  // eligible: re-arming the clock is how a flagged deal is recovered.
+  const canIssueDeadline =
+    (detail.stage === "LEAD" ||
+      detail.stage === "PROPOSAL" ||
+      detail.stage === "NOT_SUBMITTED") &&
+    !detail.proposalSubmittedAt;
+
+  // The sweep can move a deal to NOT_SUBMITTED out from under nobody's
+  // attention, so the explanation is surfaced at the top of the detail screen
+  // rather than left for someone to remember it exists.
+  const owesExplanation = detail.breachNoteRequired;
+  const breachNoteLate =
+    owesExplanation &&
+    detail.breachNoteDueAt != null &&
+    new Date(detail.breachNoteDueAt).getTime() < Date.now();
+
   return (
     <Screen>
       <ScrollView
@@ -786,9 +1042,7 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
         >
           <View style={styles.detailBadgeRow}>
             <Badge stage={detail.stage} />
-            <Text style={styles.detailId}>
-              {detail.service}
-            </Text>
+            <RagBadge rag={detail.rag} showDays />
           </View>
 
           <Text style={styles.detailTitle}>{detail.title}</Text>
@@ -811,11 +1065,84 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
           ) : null}
         </View>
 
+        {owesExplanation ? (
+          <Card style={styles.breachCard}>
+            <View style={styles.breachHeader}>
+              <Icon
+                name={IconSet.Warning}
+                size={16}
+                color={breachNoteLate ? tokens.color.danger : tokens.color.warning}
+              />
+              <Text
+                style={[
+                  styles.breachTitle,
+                  { color: breachNoteLate ? tokens.color.danger : tokens.color.warning },
+                ]}
+              >
+                {breachNoteLate
+                  ? "Explanation overdue"
+                  : "Explanation owed"}
+              </Text>
+            </View>
+
+            <Text style={styles.breachBody}>
+              The proposal deadline passed on{" "}
+              {fmtDate(detail.proposalBreachedAt ?? detail.proposalDueAt ?? "")}
+              {detail.breachNoteDueAt
+                ? ` and this deal was flagged automatically. ${detail.stage === "NOT_SUBMITTED" ? "Move it back to Proposal once the draft is on its way." : "Recover the draft to clear the flag."} Your explanation is due by ${fmtDate(detail.breachNoteDueAt)}.`
+                : "."}
+            </Text>
+
+            {breachNoteOpen ? (
+              <>
+                <TextFieldForm
+                  label="Why was the deadline missed?"
+                  value={breachExplanation}
+                  onChangeText={setBreachExplanation}
+                  placeholder="e.g. Client data was incomplete, so drafting could not start"
+                />
+                <View style={styles.breachActions}>
+                  <Button
+                    title="Save explanation"
+                    onPress={saveBreachNote}
+                    loading={breachBusy}
+                    disabled={breachBusy || !breachExplanation.trim()}
+                    icon={IconSet.Check}
+                  />
+                  <Pressable onPress={() => setBreachNoteOpen(false)}>
+                    <Text style={styles.cancelText}>Cancel</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <Button
+                title="Record the explanation"
+                onPress={() => setBreachNoteOpen(true)}
+                icon={IconSet.Doc}
+              />
+            )}
+          </Card>
+        ) : null}
+
         <Card>
           <InfoRow
             label="Service line"
             value={detail.service}
             icon={IconSet.Doc}
+          />
+          <InfoRow
+            label="Lead source"
+            value={
+              detail.leadSource === "OTHER" && detail.leadSourceNote
+                ? `${LEAD_SOURCE_LABELS[detail.leadSource]} · ${detail.leadSourceNote}`
+                : LEAD_SOURCE_LABELS[detail.leadSource]
+            }
+            icon={IconSet.Search}
+          />
+          <InfoRow
+            label="Lead received"
+            value={fmtDate(detail.leadReceivedAt)}
+            icon={IconSet.Calendar}
           />
           <InfoRow
             label="Department"
@@ -859,6 +1186,91 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
             />
           ) : null}
         </Card>
+
+        {canIssueDeadline || detail.proposalDueAt ? (
+          <>
+            <Section
+              title="Proposal deadline"
+              action={
+                canIssueDeadline ? (
+                  <Pressable
+                    onPress={() => {
+                      if (deadlineOpen) {
+                        setDeadlineOpen(false);
+                        setDeadlineDate(null);
+                      } else {
+                        // Pre-fill with the existing deadline, or a fortnight
+                        // out when there is none.
+                        setDeadlineDate(
+                          detail.proposalDueAt
+                            ? new Date(detail.proposalDueAt)
+                            : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+                        );
+                        setDeadlineOpen(true);
+                      }
+                    }}
+                    hitSlop={8}
+                  >
+                    <Text style={styles.cancelText}>
+                      {deadlineOpen ? "Cancel" : detail.proposalDueAt ? "Change" : "Set"}
+                    </Text>
+                  </Pressable>
+                ) : null
+              }
+            />
+
+            <Card>
+              <InfoRow
+                label="Draft due (internal)"
+                value={
+                  detail.proposalDueAt ? fmtDate(detail.proposalDueAt) : "Not set"
+                }
+                icon={IconSet.Clock}
+              />
+              <InfoRow
+                label="Status"
+                value={detail.rag ? RAG_LABELS[detail.rag.status] : "Unknown"}
+                icon={IconSet.Warning}
+              />
+              {detail.proposalSubmittedAt ? (
+                <InfoRow
+                  label="Sent to client"
+                  value={fmtDate(detail.proposalSubmittedAt)}
+                  icon={IconSet.Check}
+                />
+              ) : null}
+
+              {deadlineOpen ? (
+                <>
+                  <DateField
+                    label="Draft ready by"
+                    value={deadlineDate}
+                    onChange={setDeadlineDate}
+                    minimumDate={new Date()}
+                    hint="Internal only — this is when the draft should be finished, not when it goes to the client."
+                  />
+                  <Button
+                    title="Save deadline"
+                    onPress={saveDeadline}
+                    loading={deadlineBusy}
+                    disabled={deadlineBusy || !deadlineDate}
+                    icon={IconSet.Check}
+                  />
+                </>
+              ) : null}
+
+              {detail.proposalDueAt && !deadlineOpen ? (
+                <View style={styles.deadlineClear}>
+                  <Pressable onPress={clearDeadline} disabled={deadlineBusy}>
+                    <Text style={styles.clearDeadlineText}>
+                      {deadlineBusy ? "Clearing…" : "Clear deadline"}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </Card>
+          </>
+        ) : null}
 
         {isBD ? (
           <>
@@ -950,6 +1362,58 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
                 ) : null
               }
             />
+
+            {missingFields.length > 0 ? (
+              <Card style={styles.missingCard}>
+                <View style={styles.missingHeader}>
+                  <Icon
+                    name={IconSet.Warning}
+                    size={16}
+                    color={tokens.color.warning}
+                  />
+                  <Text style={styles.missingTitle}>
+                    Before this can be a proposal
+                  </Text>
+                </View>
+
+                <Text style={styles.missingBody}>
+                  The client record needs to be complete before the firm
+                  commits to a number in writing. {missingFields.length} item
+                  {missingFields.length === 1 ? "" : "s"} outstanding:
+                </Text>
+
+                {missingFields.map((field) => (
+                  <View key={field.field} style={styles.missingRow}>
+                    <View
+                      style={[
+                        styles.missingDot,
+                        {
+                          backgroundColor:
+                            field.scope === "ORGANIZATION"
+                              ? tokens.color.info
+                              : tokens.color.brand,
+                        },
+                      ]}
+                    />
+                    <Text style={styles.missingItem}>{field.message}</Text>
+                  </View>
+                ))}
+              </Card>
+            ) : null}
+
+            {detail.stage === "NOT_SUBMITTED" && !target ? (
+              <View style={styles.recoverHint}>
+                <Icon
+                  name={IconSet.Search}
+                  size={14}
+                  color={tokens.color.inkMuted}
+                />
+                <Text style={styles.recoverHintText}>
+                  This deal was flagged automatically when its proposal
+                  deadline passed. Move it back to Proposal to resume work.
+                </Text>
+              </View>
+            ) : null}
 
             {target === null ? (
               <View style={styles.transitionRow}>
@@ -1502,6 +1966,144 @@ const styles = StyleSheet.create({
   formBusy: {
     alignSelf: "center",
     marginVertical: 18,
+  },
+
+  sourceRow: {
+    marginTop: 5,
+  },
+
+  sourceText: {
+    ...tokens.type.micro,
+    fontWeight: "600",
+    letterSpacing: 0,
+    color: tokens.color.inkFaint,
+  },
+
+  pipelineRagRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
+  },
+
+  owePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: tokens.radius.pill,
+    backgroundColor: tokens.color.dangerSoft,
+  },
+
+  owePillText: {
+    ...tokens.type.micro,
+    fontWeight: "700",
+    letterSpacing: 0,
+    color: tokens.color.danger,
+  },
+
+  breachCard: {
+    borderColor: tokens.color.danger,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+
+  breachHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    marginBottom: 8,
+  },
+
+  breachTitle: {
+    ...tokens.type.h3,
+  },
+
+  breachBody: {
+    ...tokens.type.caption,
+    color: tokens.color.inkMuted,
+    lineHeight: 19,
+    marginBottom: 14,
+  },
+
+  breachActions: {
+    alignItems: "center",
+    marginTop: 12,
+  },
+
+  deadlineClear: {
+    alignItems: "center",
+    marginTop: 12,
+  },
+
+  clearDeadlineText: {
+    ...tokens.type.caption,
+    fontWeight: "600",
+    color: tokens.color.inkMuted,
+  },
+
+  missingCard: {
+    borderColor: tokens.color.warning,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+
+  missingHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    marginBottom: 8,
+  },
+
+  missingTitle: {
+    ...tokens.type.h3,
+    color: tokens.color.ink,
+  },
+
+  missingBody: {
+    ...tokens.type.caption,
+    color: tokens.color.inkMuted,
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+
+  missingRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    marginBottom: 7,
+  },
+
+  missingDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    marginTop: 6,
+  },
+
+  missingItem: {
+    ...tokens.type.caption,
+    flex: 1,
+    color: tokens.color.ink,
+  },
+
+  recoverHint: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: tokens.color.surfaceMuted,
+    borderRadius: tokens.radius.md,
+    padding: 12,
+    marginBottom: 12,
+  },
+
+  recoverHintText: {
+    ...tokens.type.caption,
+    flex: 1,
+    color: tokens.color.inkMuted,
+    lineHeight: 18,
   },
 
   stageSegmented: {

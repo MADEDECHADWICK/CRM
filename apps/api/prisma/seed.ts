@@ -2,7 +2,7 @@ import "dotenv/config";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { reportPeriodRange, REPORT_PERIODS, type ReportPeriod } from "@crm/core";
+import { reportPeriodRange, REPORT_PERIODS, type ReportPeriod, type LeadSource } from "@crm/core";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -148,6 +148,7 @@ async function main() {
       | "LEAD"
       | "PROPOSAL"
       | "AWAITING_FEEDBACK"
+      | "NOT_SUBMITTED"
       | "WON"
       | "LOST"
       | "NO_REPLY"
@@ -158,6 +159,20 @@ async function main() {
     enteredAt: Date;
     lostReason?: string;
     revisitAt?: Date;
+    // BR-018: attribution. Required with no default, so every seeded deal
+    // states where it came from — the reporting is only as good as this.
+    leadSource: LeadSource;
+    leadSourceNote?: string;
+    // How long the lead sat before the deal was written up. Varying this
+    // gives the "lead to proposal" report something real to measure.
+    leadReceivedAt: Date;
+    // BR-016: the internal drafting deadline, where the deal still has one.
+    proposalDueAt?: Date;
+    proposalSubmittedAt?: Date;
+    // BR-019: the breach state, for the one seeded NOT_SUBMITTED deal.
+    proposalBreachedAt?: Date;
+    breachNoteRequired?: boolean;
+    breachNoteDueAt?: Date;
   };
 
   const now = new Date();
@@ -175,6 +190,8 @@ async function main() {
       service: "Tax compliance review",
       owner: "john",
       enteredAt: withinWeek(0),
+      leadSource: "WEBSITE",
+      leadReceivedAt: daysFromNow(-4),
     },
     {
       // This week — active proposal entered this week.
@@ -187,6 +204,11 @@ async function main() {
       amount: 680000,
       owner: "mary",
       enteredAt: withinWeek(1),
+      leadSource: "REFERRAL",
+      leadReceivedAt: daysFromNow(-19),
+      // 12 days out — lands in the amber band, so the pipeline shows a
+      // healthy mix of colours rather than everything green.
+      proposalDueAt: daysFromNow(12),
     },
     {
       // This week — proposal sent, client still reading it. Sits between the
@@ -202,6 +224,13 @@ async function main() {
       owner: "john",
       enteredAt: withinWeek(2),
       revisitAt: daysFromNow(6),
+      leadSource: "PARTNER_REFERRAL",
+      leadReceivedAt: daysFromNow(-33),
+      // Drafted to an internal deadline, then actually sent. The gap between
+      // the two dates is the real "submission lag" the business wants to see
+      // improve — the deadline is not the send date.
+      proposalDueAt: withinWeek(1),
+      proposalSubmittedAt: withinWeek(2),
     },
     {
       // This week — won today.
@@ -214,6 +243,8 @@ async function main() {
       amount: 450000,
       owner: "john",
       enteredAt: withinWeek(0),
+      leadSource: "EXHIBITION",
+      leadReceivedAt: daysFromNow(-62),
     },
     {
       // This month (not this week) — lead qualified this month.
@@ -226,6 +257,8 @@ async function main() {
       amount: 150000,
       owner: "mary",
       enteredAt: withinMonth(8),
+      leadSource: "TENDER",
+      leadReceivedAt: daysFromNow(-11),
     },
     {
       // This month — won mid-month.
@@ -238,6 +271,8 @@ async function main() {
       amount: 320000,
       owner: "john",
       enteredAt: withinMonth(15),
+      leadSource: "WALK_IN",
+      leadReceivedAt: daysFromNow(-27),
     },
     {
       // This month — lost mid-month.
@@ -251,6 +286,8 @@ async function main() {
       owner: "mary",
       enteredAt: withinMonth(18),
       lostReason: "Client chose an internal audit team",
+      leadSource: "COLD_OUTREACH",
+      leadReceivedAt: daysFromNow(-40),
     },
     {
       // This month — deferred, revisit in 30 days.
@@ -264,6 +301,8 @@ async function main() {
       owner: "john",
       enteredAt: withinMonth(10),
       revisitAt: new Date(now.getTime() + 30 * DAY_MS),
+      leadSource: "REFERRAL",
+      leadReceivedAt: daysFromNow(-21),
     },
     {
       // This month — no reply.
@@ -276,6 +315,8 @@ async function main() {
       amount: 400000,
       owner: "mary",
       enteredAt: withinMonth(11),
+      leadSource: "MARKETING_CAMPAIGN",
+      leadReceivedAt: daysFromNow(-15),
     },
     {
       // This quarter (not this month) — active proposal from August.
@@ -288,6 +329,33 @@ async function main() {
       amount: 750000,
       owner: "john",
       enteredAt: withinQuarter(45),
+      leadSource: "COLD_OUTREACH",
+      leadReceivedAt: daysFromNow(-58),
+      // 3 days out — red band, still recoverable. This is the deal the
+      // pipeline is meant to make you look at.
+      proposalDueAt: daysFromNow(3),
+    },
+    {
+      // A missed drafting deadline, already flagged by the sweep. Seeds the
+      // NOT_SUBMITTED column, the rose stage colour, and an outstanding
+      // breach-note debt so the escalation path is visible without having to
+      // wait for a real deadline to pass.
+      title: "Demo — RiftValley proposed audit",
+      org: "RiftValley Sacco",
+      industry: "Cooperative banking",
+      department: "AUDIT",
+      stage: "NOT_SUBMITTED",
+      service: "Statutory audit FY2026",
+      amount: 390000,
+      owner: "mary",
+      enteredAt: withinMonth(20),
+      leadSource: "OTHER",
+      leadSourceNote: "Introduced at the Nakuru AGM trade fair",
+      leadReceivedAt: daysFromNow(-24),
+      proposalDueAt: daysFromNow(-2),
+      proposalBreachedAt: daysFromNow(-2),
+      breachNoteRequired: true,
+      breachNoteDueAt: daysFromNow(1),
     },
     {
       // This quarter — won in July.
@@ -300,6 +368,8 @@ async function main() {
       amount: 1200000,
       owner: "mary",
       enteredAt: withinQuarter(70),
+      leadSource: "TENDER",
+      leadReceivedAt: daysFromNow(-96),
     },
     {
       // This quarter — lost in July.
@@ -313,6 +383,8 @@ async function main() {
       owner: "john",
       enteredAt: withinQuarter(55),
       lostReason: "Scope changes requested by client",
+      leadSource: "SOCIAL_MEDIA",
+      leadReceivedAt: daysFromNow(-71),
     },
     {
       // This year (before this quarter) — lead from May.
@@ -325,6 +397,8 @@ async function main() {
       amount: 180000,
       owner: "mary",
       enteredAt: withinYear(140),
+      leadSource: "REFERRAL",
+      leadReceivedAt: daysFromNow(-150),
     },
     {
       // This year — won in March.
@@ -337,6 +411,8 @@ async function main() {
       amount: 900000,
       owner: "john",
       enteredAt: withinYear(200),
+      leadSource: "PARTNER_REFERRAL",
+      leadReceivedAt: daysFromNow(-210),
     },
     {
       // This year — lost in March.
@@ -350,6 +426,8 @@ async function main() {
       owner: "mary",
       enteredAt: withinYear(180),
       lostReason: "Pricing too high vs competing firm",
+      leadSource: "COLD_OUTREACH",
+      leadReceivedAt: daysFromNow(-190),
     },
     {
       // Last year — only visible under "All time".
@@ -362,6 +440,8 @@ async function main() {
       amount: 300000,
       owner: "john",
       enteredAt: lastYear(420),
+      leadSource: "REFERRAL",
+      leadReceivedAt: lastYear(430),
     },
     {
       // Last year — only visible under "All time".
@@ -375,12 +455,17 @@ async function main() {
       owner: "mary",
       enteredAt: lastYear(440),
       lostReason: "Deferred indefinitely by owner",
+      // The one OTHER source in the seed set, with the note that OTHER
+      // requires — an untagged "other" is the same as no attribution at all.
+      leadSource: "OTHER",
+      leadSourceNote: "Walked in after seeing the office signage",
+      leadReceivedAt: lastYear(450),
     },
   ];
 
   for (const opp of demo) {
     const organization = await mid(opp.org, opp.industry);
-    await prisma.opportunity.create({
+    const created = await prisma.opportunity.create({
       data: {
         title: opp.title,
         organizationId: organization.id,
@@ -396,8 +481,51 @@ async function main() {
         lostReason: opp.lostReason,
         revisitAt: opp.revisitAt,
         createdAt: opp.enteredAt,
+
+        // Attribution and the proposal drafting lifecycle. proposalDueSetBy
+        // and proposalDueSetAt are backdated to just before the deadline so
+        // the audit columns tell a coherent story rather than claiming a
+        // deadline was issued on the day the deal was created.
+        leadSource: opp.leadSource,
+        leadSourceNote: opp.leadSourceNote ?? null,
+        leadReceivedAt: opp.leadReceivedAt,
+        ...(opp.proposalDueAt
+          ? {
+              proposalDueAt: opp.proposalDueAt,
+              proposalDueSetById: grace.id,
+              proposalDueSetAt: new Date(opp.proposalDueAt.getTime() - 7 * DAY_MS),
+            }
+          : {}),
+        ...(opp.proposalSubmittedAt
+          ? { proposalSubmittedAt: opp.proposalSubmittedAt }
+          : {}),
+        ...(opp.proposalBreachedAt
+          ? { proposalBreachedAt: opp.proposalBreachedAt }
+          : {}),
+        ...(opp.breachNoteRequired !== undefined
+          ? { breachNoteRequired: opp.breachNoteRequired }
+          : {}),
+        ...(opp.breachNoteDueAt ? { breachNoteDueAt: opp.breachNoteDueAt } : {}),
       },
     });
+
+    // The NOT_SUBMITTED deal needs a real system-authored history entry and
+    // an open breach debt, or it would be a deal in a stage with no record
+    // of how it got there — the exact audit hole ActorType exists to close.
+    if (opp.stage === "NOT_SUBMITTED" && opp.proposalBreachedAt) {
+      await prisma.stageHistoryEntry.create({
+        data: {
+          opportunityId: created.id,
+          fromStage: "PROPOSAL",
+          toStage: "NOT_SUBMITTED",
+          changedById: null,
+          actorType: "SYSTEM",
+          reason: null,
+          systemReason: `BD drafting deadline of ${opp.proposalDueAt!.toISOString().slice(0, 10)} passed with nothing submitted.`,
+          changedAt: opp.proposalBreachedAt,
+        },
+      });
+    }
   }
 
   // Named people at each client. Distinct from the generic company email /

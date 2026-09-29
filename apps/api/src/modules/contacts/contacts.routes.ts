@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth, AuthedRequest } from "../../middleware/authorize";
@@ -33,6 +33,22 @@ const createSchema = z.object({
 // A contact always belongs to an organization, so every read/write is
 // filtered through it rather than trusting a bare contact id.
 const withOrganization = { organization: true } as const;
+
+// Parsed rather than read straight off req.params: Express types a param as
+// `string | string[]`, and an unvalidated id also reaches Prisma as a
+// non-UUID and surfaces as an unhandled 500 instead of a 400.
+const idParamSchema = z.object({ id: z.string().uuid() });
+
+function parseId(req: AuthedRequest, res: Response): string | null {
+  const params = idParamSchema.safeParse(req.params);
+  if (!params.success) {
+    res
+      .status(400)
+      .json({ success: false, error: { code: "VALIDATION_ERROR", message: "Invalid contact id." } });
+    return null;
+  }
+  return params.data.id;
+}
 
 // At least one way to reach the person is required, otherwise the contact is
 // a name with nothing actionable on it.
@@ -71,8 +87,11 @@ contactsRouter.get("/", async (req: AuthedRequest, res) => {
 });
 
 contactsRouter.get("/:id", async (req: AuthedRequest, res) => {
+  const id = parseId(req, res);
+  if (!id) return;
+
   const contact = await prisma.contact.findUnique({
-    where: { id: req.params.id },
+    where: { id },
     include: withOrganization,
   });
 
@@ -144,7 +163,10 @@ contactsRouter.post("/", async (req: AuthedRequest, res) => {
 });
 
 contactsRouter.patch("/:id", async (req: AuthedRequest, res) => {
-  const existing = await prisma.contact.findUnique({ where: { id: req.params.id } });
+  const id = parseId(req, res);
+  if (!id) return;
+
+  const existing = await prisma.contact.findUnique({ where: { id } });
   if (!existing) {
     return res
       .status(404)
@@ -193,7 +215,10 @@ contactsRouter.patch("/:id", async (req: AuthedRequest, res) => {
 });
 
 contactsRouter.delete("/:id", async (req: AuthedRequest, res) => {
-  const existing = await prisma.contact.findUnique({ where: { id: req.params.id } });
+  const id = parseId(req, res);
+  if (!id) return;
+
+  const existing = await prisma.contact.findUnique({ where: { id } });
   if (!existing) {
     return res
       .status(404)

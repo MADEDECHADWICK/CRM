@@ -2,18 +2,55 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth, AuthedRequest, opportunityScope } from "../../middleware/authorize";
-import { transitionOpportunity } from "./transitionOpportunity";
-import { REPORT_PERIODS, reportPeriodRange, customReportRange, STAGES, type Stage } from "@crm/core";
+import { transitionOpportunity, TransitionRejected } from "./transitionOpportunity";
+import {
+  setProposalDeadline,
+  clearProposalDeadline,
+  recordBreachExplanation,
+  DeadlineRejected,
+} from "./deadlines";
+import {
+  REPORT_PERIODS,
+  reportPeriodRange,
+  customReportRange,
+  STAGES,
+  LEAD_SOURCES,
+  RAG_LABELS,
+  ragFor,
+  type Stage,
+} from "@crm/core";
 
 export const opportunitiesRouter = Router();
 opportunitiesRouter.use(requireAuth);
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 
+/**
+ * Attaches the computed RAG to an opportunity on its way out.
+ *
+ * This is the only place a RAG value is ever produced. It is derived per
+ * response from the current clock and never written to the database, so two
+ * clients reading the same deal at the same moment always agree, and nothing
+ * has to be recalculated by a background job or repaired after a failure.
+ */
+function withRag<T extends {
+  stage: Stage;
+  proposalDueAt?: Date | string | null;
+  proposalSubmittedAt?: Date | string | null;
+}>(opp: T) {
+  const rag = ragFor({
+    stage: opp.stage,
+    proposalDueAt: opp.proposalDueAt,
+    proposalSubmittedAt: opp.proposalSubmittedAt,
+  });
+  return { ...opp, rag, ragLabel: RAG_LABELS[rag.status] };
+}
+
 // Derived from STAGES rather than hand-listed, so a newly added pipeline
 // stage is immediately valid here instead of being rejected with a 400.
 const listQuerySchema = z.object({
   stage: z.enum(STAGES).optional(),
+  rag: z.enum(["NO_DEADLINE", "GREEN", "AMBER", "RED", "OVERDUE", "SUBMITTED"]).optional(),
   q: z.string().optional(),
   period: z.enum(REPORT_PERIODS).optional(),
   from: z.string().datetime().optional(),
@@ -41,6 +78,18 @@ const createBodySchema = z.object({
   currency: z.string().optional(),
   ownerId: z.string().uuid().optional(),
   stage: z.enum(["PROSPECT", "LEAD"] satisfies readonly Stage[]).optional(),
+  // BR-018: the source of a lead is mandatory, with no server-side default.
+  // Defaulting it would defeat the reason the field exists — an unattributed
+  // lead is exactly what the reporting is meant to eliminate, and a silent
+  // "OTHER" would be indistinguishable from a real one.
+  leadSource: z.enum(LEAD_SOURCES),
+  // Required only for OTHER, where the enum value carries no information on
+  // its own. Enforced below so the error names the actual field.
+  leadSourceNote: z.string().optional(),
+  // When the lead actually arrived. Defaults to now when omitted, but is
+  // accepted on input because leads are often written up days after the
+  // first conversation and backdating matters for the velocity reports.
+  leadReceivedAt: z.string().datetime().optional(),
 });
 
 const reassignBodySchema = z.object({
@@ -60,7 +109,7 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
     });
   }
 
-  const { stage, q, period, from, to, ownerId, departmentId } = query.data;
+  const { stage, rag, q, period, from, to, ownerId, departmentId } = query.data;
   let range: { from: Date; to: Date } | null = null;
   if (period === "custom") {
     const resolved = customReportRange(from, to);
@@ -94,7 +143,14 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
     include: { organization: true, department: true, owner: { select: { id: true, name: true } } },
     orderBy: { stageEnteredAt: "desc" },
   });
-  res.json({ success: true, data: opps });
+
+  // Filtered and decorated here rather than in the query. RAG depends on
+  // "now" in a way SQL cannot express identically across time zones and
+  // timezone-agnostic columns, so the database returns the candidate set and
+  // one shared function decides the colour.
+  const decorated = opps.map(withRag);
+  const result = rag ? decorated.filter((o) => o.rag.status === rag) : decorated;
+  res.json({ success: true, data: result });
 });
 
 // Opportunity detail — the screen behind every transition/reassignment/
@@ -134,7 +190,7 @@ opportunitiesRouter.get("/:id", async (req: AuthedRequest, res) => {
     });
   }
 
-  res.json({ success: true, data: opp });
+  res.json({ success: true, data: withRag(opp) });
 });
 
 // Create a Lead against an existing organization + department — BR-003
@@ -147,6 +203,23 @@ opportunitiesRouter.post("/", async (req: AuthedRequest, res) => {
     return res.status(400).json({
       success: false,
       error: { code: "VALIDATION_ERROR", message: parsed.error.message },
+    });
+  }
+
+  // OTHER is the honest escape hatch in the source list, but only if the
+  // user then says what it actually was. "OTHER" with no note would quietly
+  // defeat the reporting just as badly as a blank field would.
+  if (
+    parsed.data.leadSource === "OTHER" &&
+    !parsed.data.leadSourceNote?.trim()
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Describe the lead source when selecting OTHER.",
+        field: "leadSourceNote",
+      },
     });
   }
 
@@ -180,11 +253,16 @@ opportunitiesRouter.post("/", async (req: AuthedRequest, res) => {
       createdById: req.user!.id,
       ownerId: parsed.data.ownerId ?? req.user!.id,
       stageEnteredAt: new Date(),
+      leadSource: parsed.data.leadSource,
+      leadSourceNote: parsed.data.leadSourceNote?.trim() || null,
+      leadReceivedAt: parsed.data.leadReceivedAt
+        ? new Date(parsed.data.leadReceivedAt)
+        : new Date(),
     },
     include: { organization: true, department: true },
   });
 
-  res.status(201).json({ success: true, data: opp });
+  res.status(201).json({ success: true, data: withRag(opp) });
 });
 
 opportunitiesRouter.post("/:id/transition", async (req: AuthedRequest, res) => {
@@ -194,6 +272,24 @@ opportunitiesRouter.post("/:id/transition", async (req: AuthedRequest, res) => {
     return res.status(400).json({
       success: false,
       error: { code: "VALIDATION_ERROR", message: (params.error ?? body.error)?.message },
+    });
+  }
+
+  // NOT_SUBMITTED is reachable from PROPOSAL in the state machine only
+  // because that is how the automated sweep gets there. It is not a decision
+  // a person can make by hand, so the route refuses it explicitly rather
+  // than relying on a user never trying it. A manual "I'll mark this not
+  // submitted" would produce exactly the record the automation exists to
+  // produce, but with no systemReason, no breach timestamp and no note debt
+  // — an unauditable copy of a process failure.
+  if (body.data.toStage === "NOT_SUBMITTED") {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "STAGE_NOT_SETTABLE",
+        message:
+          "NOT_SUBMITTED is set automatically when a proposal deadline passes. Use PROPOSAL to resume work on a flagged deal.",
+      },
     });
   }
 
@@ -207,9 +303,152 @@ opportunitiesRouter.post("/:id/transition", async (req: AuthedRequest, res) => {
       revisitAt: body.data.revisitAt ? new Date(body.data.revisitAt) : undefined,
       lostReason: body.data.lostReason,
     });
-    res.json({ success: true, data: result });
+    res.json({ success: true, data: withRag(result) });
   } catch (err: any) {
+    // The completeness gate returns the specific outstanding fields so the
+    // client can render a checklist. A bare 400 message would leave the user
+    // guessing which of eight fields the server meant.
+    if (err instanceof TransitionRejected) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: err.missing.length ? "INCOMPLETE_CLIENT_RECORD" : "TRANSITION_REJECTED",
+          message: err.message,
+          missingFields: err.missing,
+        },
+      });
+    }
     res.status(400).json({ success: false, error: { code: "TRANSITION_REJECTED", message: err.message } });
+  }
+});
+
+// ── BD-issued proposal drafting deadline (BR-016) ──
+//
+// Separate from /transition because the stage does not change here. Putting
+// it on the transition endpoint would imply a stage change and pollute the
+// decision history, and the deadline is re-issued repeatedly over a
+// proposal's life.
+const deadlineBodySchema = z.object({
+  dueAt: z.string().datetime(),
+});
+
+// Issuing a deadline is a BD-side judgment about drafting capacity, so it is
+// limited to the roles that actually run the pipeline. A Partner can still
+// set one on a deal they own, but a user outside those roles cannot impose a
+// date on someone else's work.
+const DEADLINE_ROLES = new Set(["MARKETING_BD", "PARTNER", "MANAGER"]);
+
+opportunitiesRouter.post("/:id/deadline", async (req: AuthedRequest, res) => {
+  const params = idParamSchema.safeParse(req.params);
+  const body = deadlineBodySchema.safeParse(req.body);
+  if (!params.success || !body.success) {
+    return res.status(400).json({
+      success: false,
+      error: { code: "VALIDATION_ERROR", message: (params.error ?? body.error)?.message },
+    });
+  }
+
+  if (!DEADLINE_ROLES.has(req.user!.role)) {
+    return res.status(403).json({
+      success: false,
+      error: { code: "FORBIDDEN", message: "Only BD, Partner or Manager roles can issue a proposal deadline." },
+    });
+  }
+
+  try {
+    const updated = await setProposalDeadline({
+      opportunityId: params.data.id,
+      dueAt: new Date(body.data.dueAt),
+      setById: req.user!.id,
+    });
+    res.json({ success: true, data: withRag(updated) });
+  } catch (err: any) {
+    const code = err instanceof DeadlineRejected ? "DEADLINE_REJECTED" : "INTERNAL_ERROR";
+    res.status(400).json({ success: false, error: { code, message: err.message } });
+  }
+});
+
+opportunitiesRouter.delete("/:id/deadline", async (req: AuthedRequest, res) => {
+  const params = idParamSchema.safeParse(req.params);
+  if (!params.success) {
+    return res.status(400).json({
+      success: false,
+      error: { code: "VALIDATION_ERROR", message: params.error.message },
+    });
+  }
+
+  if (!DEADLINE_ROLES.has(req.user!.role)) {
+    return res.status(403).json({
+      success: false,
+      error: { code: "FORBIDDEN", message: "Only BD, Partner or Manager roles can clear a proposal deadline." },
+    });
+  }
+
+  try {
+    const updated = await clearProposalDeadline(params.data.id);
+    res.json({ success: true, data: withRag(updated) });
+  } catch (err: any) {
+    const code = err instanceof DeadlineRejected ? "DEADLINE_REJECTED" : "INTERNAL_ERROR";
+    res.status(400).json({ success: false, error: { code, message: err.message } });
+  }
+});
+
+// ── The post-breach explanation (BR-019) ──
+//
+// Separate from the general note endpoint on purpose. A breach
+// explanation is a standing obligation created by the system with a due
+// date, not something a user volunteers; it needs its own endpoint so it
+// can clear the debt rather than just adding to the chatter.
+const breachNoteBodySchema = z.object({
+  explanation: z.string().min(1),
+});
+
+opportunitiesRouter.post("/:id/breach-note", async (req: AuthedRequest, res) => {
+  const params = idParamSchema.safeParse(req.params);
+  const body = breachNoteBodySchema.safeParse(req.body);
+  if (!params.success || !body.success) {
+    return res.status(400).json({
+      success: false,
+      error: { code: "VALIDATION_ERROR", message: (params.error ?? body.error)?.message },
+    });
+  }
+
+  // The obligation belongs to the person who owed the deadline, but a Manager
+  // or BD may record it on their behalf when someone is on leave — the debt
+  // still has to be closable, or an absent assignee would block it forever.
+  const opp = await prisma.opportunity.findUnique({
+    where: { id: params.data.id },
+    select: { ownerId: true, breachNoteRequired: true },
+  });
+  if (!opp) {
+    return res.status(404).json({
+      success: false,
+      error: { code: "NOT_FOUND", message: "Opportunity not found." },
+    });
+  }
+
+  const isOwner = opp.ownerId === req.user!.id;
+  const canStandIn = req.user!.role === "MANAGER" || req.user!.role === "MARKETING_BD";
+  if (!isOwner && !canStandIn) {
+    return res.status(403).json({
+      success: false,
+      error: {
+        code: "FORBIDDEN",
+        message: "Only the deal owner or a BD/Manager can record the missed-deadline explanation.",
+      },
+    });
+  }
+
+  try {
+    const result = await recordBreachExplanation({
+      opportunityId: params.data.id,
+      authorId: req.user!.id,
+      explanation: body.data.explanation,
+    });
+    res.json({ success: true, data: withRag(result.opportunity) });
+  } catch (err: any) {
+    const code = err instanceof DeadlineRejected ? "BREACH_NOTE_REJECTED" : "INTERNAL_ERROR";
+    res.status(400).json({ success: false, error: { code, message: err.message } });
   }
 });
 

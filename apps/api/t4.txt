@@ -1,0 +1,74 @@
+﻿
+> api@1.0.0 test
+> tsx --test src/__tests__/*.test.ts
+
+Γû╢ missingForProposal
+  Γ£ö a complete record reports nothing missing (7.2135ms)
+  Γ£ö each required organization field is reported by name (0.774ms)
+  Γ£ö whitespace does not count as a value (0.4976ms)
+  Γ£ö requires both a contact email AND a phone, not either (1.0123ms)
+  Γ£ö a missing contact is reported as one gap, not four (0.5587ms)
+  Γ£ö an absent organization does not throw (0.465ms)
+  Γ£ö judges the primary contact when one is flagged (0.355ms)
+  Γ£ö falls back to the first contact when none is flagged primary (0.4779ms)
+  Γ£ö reports everything missing at once, so a form can show a checklist (0.8171ms)
+  Γ£ö every message is a non-empty human sentence (1.411ms)
+Γ£ö missingForProposal (22.0615ms)
+Γû╢ state machine integrity
+  Γ£ö every stage has an entry and is reachable from PROSPECT (5.4658ms)
+  Γ£ö terminal stages are dead ends (0.601ms)
+  Γ£ö NOT_SUBMITTED is recoverable, not terminal (0.3022ms)
+  Γ£ö a won deal can never be reopened (0.2808ms)
+  Γ£ö a deal can be won from any live stage that has sent a proposal (0.2672ms)
+  Γ£ö NOT_SUBMITTED cannot jump straight to WON (1.0199ms)
+  Γ£ö a deal cannot be WON before a proposal could exist (0.3181ms)
+  Γ£ö losing is legal from any stage that reached a proposal (0.2732ms)
+  Γ£ö a prospect or lead cannot be marked LOST directly (0.2903ms)
+  Γ£ö nothing leads out of a terminal stage, in any direction (0.394ms)
+  Γ£ö the sweep can flag every stage it is allowed to act in (0.2977ms)
+  Γ£ö nothing else can reach NOT_SUBMITTED (0.3065ms)
+  Γ£ö only in-scope, unsubmitted stages are breachable (0.2364ms)
+  Γ£ö BREACHABLE_STAGES is exactly the proposal-drafting stages (0.2142ms)
+  Γ£ö NOT_SUBMITTED is in scope for deadlines but is not itself swept (0.1767ms)
+  Γ£ö a submitted proposal stage is never breachable (0.138ms)
+Γ£ö state machine integrity (11.9835ms)
+Γû╢ lead sources
+  Γ£ö every source has a label (0.2722ms)
+  Γ£ö paid sources are the ones the firm spends money on (0.2704ms)
+Γ£ö lead sources (0.7525ms)
+Γû╢ ragFor
+  Γ£ö no deadline is NO_DEADLINE, never green (3.2114ms)
+  Γ£ö a missing deadline does not hide the gap behind a safe colour (0.4482ms)
+  Γ£ö band boundaries are inclusive at the top of each band (0.4341ms)
+  Γ£ö today's deadline is RED, and only tomorrow is OVERDUE (0.4146ms)
+  Γ£ö a deadline later today is RED, not AMBER (0.3799ms)
+  Γ£ö daysRemaining goes negative once overdue (0.3612ms)
+  Γ£ö submission wins over an expired deadline (0.3765ms)
+  Γ£ö submission wins even when no deadline was ever issued (0.3407ms)
+  Γ£ö a deadline in a stage where drafting is not in progress is ignored (0.9761ms)
+  Γ£ö a deadline counts from LEAD onward (0.7923ms)
+  Γ£ö NOT_SUBMITTED still counts down (0.4076ms)
+  Γ£ö accepts both Date and ISO strings (2.1774ms)
+  Γ£ö an unparseable date degrades to NO_DEADLINE instead of throwing (0.684ms)
+  Γ£ö uses the current clock when no now is supplied (0.3899ms)
+Γ£ö ragFor (15.7465ms)
+Γû╢ isProposalOverdue
+  Γ£ö true only for an expired, unsubmitted, in-scope deadline (0.737ms)
+  Γ£ö false while the deadline is still in the future (0.3902ms)
+  Γ£ö false once submitted, even when the deadline passed first (0.3314ms)
+  Γ£ö false without a deadline at all (0.2466ms)
+  Γ£ö false in out-of-scope stages (0.2513ms)
+  Γ£ö true from LEAD, since deadlines start at qualification (0.2502ms)
+  Γ£ö red is not overdue (0.2311ms)
+Γ£ö isProposalOverdue (3.2456ms)
+Γû╢ ragStatusFor
+  Γ£ö is the label-only shorthand and agrees with ragFor (0.3928ms)
+Γ£ö ragStatusFor (0.5685ms)
+Γä╣ tests 50
+Γä╣ suites 6
+Γä╣ pass 50
+Γä╣ fail 0
+Γä╣ cancelled 0
+Γä╣ skipped 0
+Γä╣ todo 0
+Γä╣ duration_ms 2393.3905

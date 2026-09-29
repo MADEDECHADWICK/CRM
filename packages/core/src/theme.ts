@@ -9,6 +9,7 @@
 // StyleSheet in packages/ui, Tailwind in the web app) maps onto these.
 
 import type { Stage, FollowupType } from "./crm-types";
+import type { RagStatus } from "./rag";
 
 export type { Stage, FollowupType };
 
@@ -106,6 +107,11 @@ export const STAGE_COLORS: Record<Stage, { text: string; bg: string; dot: string
   LEAD:      { text: "#1d4ed8", bg: "#eff6ff", dot: "#3b82f6" },
   PROPOSAL:  { text: "#b45309", bg: "#fffbeb", dot: "#f59e0b" },
   AWAITING_FEEDBACK: { text: "#0891b2", bg: "#ecfeff", dot: "#06b6d4" },
+  // Rose, not LOST's deep red and not DEFERRED's orange. This stage is not a
+  // closed deal and not a parked one — it is an internal failure that still
+  // needs somebody to act, and it has to read differently from both at a
+  // glance in a dense pipeline list.
+  NOT_SUBMITTED: { text: "#9f1239", bg: "#fff1f2", dot: "#f43f5e" },
   WON:       { text: "#047857", bg: "#ecfdf5", dot: "#10b981" },
   LOST:      { text: "#b91c1c", bg: "#fef2f2", dot: "#ef4444" },
   NO_REPLY:  { text: "#475569", bg: "#f1f5f9", dot: "#94a3b8" },
@@ -120,10 +126,38 @@ export const STAGE_LABELS: Record<Stage, string> = {
   LEAD: "Lead",
   PROPOSAL: "Proposal",
   AWAITING_FEEDBACK: "Awaiting Feedback",
+  // "Not submitted" rather than "Missed" — the stage describes what is true
+  // of the proposal, and the blame belongs in the breach note, not the label
+  // the whole pipeline is sorted by.
+  NOT_SUBMITTED: "Not Submitted",
   WON: "Won",
   LOST: "Lost",
   NO_REPLY: "No Reply",
   DEFERRED: "Deferred",
+};
+
+// RAG palette for proposal drafting deadlines (BR-017).
+//
+// Kept separate from STAGE_COLORS because a RAG value answers a different
+// question — "how much time is left on the clock" — not "where is this deal in
+// the pipeline". A deal can be amber while sitting in PROPOSAL, so borrowing
+// the stage colours would make the two signals impossible to tell apart on a
+// dense list.
+//
+// NO_DEADLINE is intentionally grey rather than green. Defaulting a missing
+// deadline to "on track" would hide the one state a manager most needs to see.
+export const RAG_COLORS: Record<
+  RagStatus,
+  { text: string; bg: string; dot: string }
+> = {
+  NO_DEADLINE: { text: "#475569", bg: "#f1f5f9", dot: "#94a3b8" },
+  GREEN: { text: "#047857", bg: "#ecfdf5", dot: "#10b981" },
+  AMBER: { text: "#b45309", bg: "#fffbeb", dot: "#f59e0b" },
+  RED: { text: "#b91c1c", bg: "#fef2f2", dot: "#ef4444" },
+  OVERDUE: { text: "#9f1239", bg: "#fff1f2", dot: "#f43f5e" },
+  // Matches WON's green: once the proposal is out, the clock has stopped and
+  // the deal is simply done being tracked.
+  SUBMITTED: { text: "#047857", bg: "#ecfdf5", dot: "#10b981" },
 };
 
 // Human-readable labels for follow-up types (CALL | EMAIL | MEETING).

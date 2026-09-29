@@ -8,6 +8,7 @@ export * from "./EmptyState";
 export * from "./IconButton";
 export * from "./icons";
 export * from "./InfoRow";
+export * from "./RagBadge";
 export * from "./PageHero";
 export * from "./Screen";
 export * from "./SearchBar";
