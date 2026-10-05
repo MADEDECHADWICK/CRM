@@ -5,8 +5,13 @@ import {
   initialWindowMetrics,
 } from "react-native-safe-area-context";
 
-import { AuthProvider } from "./src/auth/AuthContext";
-import { AppNavigator } from "./src/navigation/AppNavigator";
+import { AppNavigator, AuthProvider, setApiUrl } from "@crm/app";
+
+import { API_URL } from "./src/lib/api";
+
+// Configured once, at import, before the first render. The shared client in
+// @crm/app resolves this per request, so no screen can point somewhere else.
+setApiUrl(API_URL);
 
 export default function App() {
   return (

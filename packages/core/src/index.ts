@@ -3,6 +3,7 @@ export * from "./api-client";
 export * from "./auth-types";
 export * from "./crm-types";
 export * from "./business-rules";
+export * from "./ownership";
 export * from "./format";
 export * from "./lead-source";
 export * from "./rag";

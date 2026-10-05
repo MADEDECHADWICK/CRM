@@ -12,10 +12,9 @@ import {
   View,
 } from "react-native";
 
-import DateTimePicker from "@react-native-community/datetimepicker";
+import { DateTimeInput as DateTimePicker } from "../components/DateTimeInput";
 
 import {
-  createApiClient,
   type Followup,
   type FollowupType,
   type Opportunity,
@@ -41,9 +40,7 @@ import {
 } from "@crm/ui";
 
 import { useAuth } from "../auth/AuthContext";
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
-const apiFetch = createApiClient(API_URL);
+import { apiFetch } from "../api";
 
 type TabKey = "pending" | "done";
 

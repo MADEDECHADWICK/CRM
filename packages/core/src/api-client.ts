@@ -50,13 +50,26 @@ export class ApiError extends Error {
   }
 }
 
-export function createApiClient(baseUrl: string) {
+/**
+ * Accepts either a fixed base URL or a resolver called per request.
+ *
+ * The resolver form exists because the mobile and web clients share one
+ * module-level client from @crm/app. Each app decides its own base URL at
+ * startup — a device needs EXPO_PUBLIC_API_URL, while a browser derives it
+ * from its own hostname — and that has to be settable *after* this module is
+ * imported. Binding the URL eagerly at construction time would freeze whichever
+ * value happened to exist first.
+ */
+export function createApiClient(baseUrl: string | (() => string)) {
+  const resolveBaseUrl = () =>
+    typeof baseUrl === "function" ? baseUrl() : baseUrl;
+
   return async function apiFetch<T = unknown>(
     path: string,
     token: string | null,
     options: RequestInit = {}
   ): Promise<T> {
-    const url = `${baseUrl}${path}`;
+    const url = `${resolveBaseUrl()}${path}`;
 
     const response = await fetch(url, {
       ...options,

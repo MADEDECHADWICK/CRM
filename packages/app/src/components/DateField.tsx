@@ -16,22 +16,20 @@
 
 import { useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
-import DateTimePicker from "@react-native-community/datetimepicker";
 
 import { tokens } from "@crm/core";
 import { Icon, IconSet } from "@crm/ui";
+
+import { DateTimeInput as DateTimePicker } from "./DateTimeInput";
+import { toNoonUTC } from "./dateUtils";
+
+export { toNoonUTC };
 
 const DEFAULT_FORMAT: Intl.DateTimeFormatOptions = {
   day: "numeric",
   month: "short",
   year: "numeric",
 };
-
-export function toNoonUTC(date: Date): Date {
-  return new Date(
-    Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0)
-  );
-}
 
 type DateFieldProps = {
   label?: string;

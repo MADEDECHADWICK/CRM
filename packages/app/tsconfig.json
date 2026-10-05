@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    // DOM is required by DateTimeInput.web.tsx, which renders a real
+    // <input type="date"> inside the React Native tree. react-native-web turns
+    // that tree into actual DOM elements, so this is not a leak of browser APIs
+    // into native code — the file carrying it is only ever bundled for the web.
+    "lib": ["ESNext", "DOM"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowJs": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  },
+  "include": ["src"]
+}

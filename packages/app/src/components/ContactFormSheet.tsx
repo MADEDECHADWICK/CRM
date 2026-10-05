@@ -19,7 +19,6 @@ import {
 } from "react-native";
 
 import {
-  createApiClient,
   type Contact,
   type Organization,
   tokens,
@@ -27,8 +26,7 @@ import {
 
 import { Button, Icon, IconSet, TextField } from "@crm/ui";
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
-const apiFetch = createApiClient(API_URL);
+import { apiFetch } from "../api";
 
 type FormState = {
   name: string;

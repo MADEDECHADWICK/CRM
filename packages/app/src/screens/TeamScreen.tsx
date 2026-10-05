@@ -11,8 +11,8 @@ import {
 } from "react-native";
 
 import {
-  createApiClient,
   formatAmount,
+  type BreakdownRow,
   type DepartmentDetail,
   type ReportPeriod,
   type ReportingBreakdown,
@@ -21,6 +21,7 @@ import {
   type UserLite,
   REPORT_PERIOD_LABELS,
   REPORT_PERIODS,
+  isOwnerEligible,
   tokens,
 } from "@crm/core";
 
@@ -39,9 +40,7 @@ import {
 } from "@crm/ui";
 
 import { useAuth } from "../auth/AuthContext";
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
-const apiFetch = createApiClient(API_URL);
+import { apiFetch } from "../api";
 
 const ROLE_LABELS: Record<Role, string> = {
   MARKETING_BD: "Marketing & BD",
@@ -122,12 +121,9 @@ export function TeamScreen() {
       ]);
 
       setBreakdown(breakdownData);
-      setStaff(
-        userData.filter(
-          (user): user is StaffUser =>
-            user.role === "PARTNER" || user.role === "MANAGER"
-        )
-      );
+      // isOwnerEligible is the same predicate the API validates an owner with,
+      // so this list can never offer somebody the server would then refuse.
+      setStaff(userData.filter(isOwnerEligible));
       setDepartments(departmentData);
     } catch (err) {
       console.error("Team loading error:", err);
@@ -273,6 +269,17 @@ export function TeamScreen() {
                   rows.map((row) => {
                     const user =
                       staff.find((member) => member.id === row.id) ?? null;
+                    // Naming the department somebody runs, not just belongs to.
+                    // Membership and command are separate facts, and a reader
+                    // scanning this list needs to know which is which — an
+                    // unstated "Head of Tax" is the fact the whole ownership
+                    // model rests on.
+                    const headsName =
+                      user?.headsDepartmentId != null
+                        ? (departments.find(
+                            (dept) => dept.id === user.headsDepartmentId
+                          )?.name ?? null)
+                        : null;
                     return (
                       <MemberCard
                         key={row.id}
@@ -281,6 +288,7 @@ export function TeamScreen() {
                         departmentName={
                           row.subtitle ?? user?.department?.name ?? null
                         }
+                        headsDepartmentName={headsName}
                         departments={departments}
                         row={row}
                         onChanged={reloadAfterChange}
@@ -317,25 +325,37 @@ export function TeamScreen() {
                   />
                 ) : null}
 
-                {rows.length === 0 ? (
+                {departments.length === 0 ? (
                   <EmptyState
                     icon={IconSet.Building}
                     title="No departments yet"
                     subtitle="Create departments for each service line."
                   />
                 ) : (
-                  rows.map((row) => {
-                    const department =
-                      departments.find((dept) => dept.id === row.id) ?? null;
-                    return (
-                      <DepartmentCard
-                        key={row.id}
-                        name={row.name}
-                        memberCount={department?.memberCount ?? 0}
-                        row={row}
-                      />
-                    );
-                  })
+                  <>
+                    {/* Driven by `departments`, not by the reporting rows.
+
+                        The breakdown only contains departments that have
+                        recorded activity, so listing from `rows` meant a newly
+                        created department had no card at all — and that card is
+                        the only place to appoint its head. A department with no
+                        deals is exactly the one that most needs setting up, so
+                        it must not be the one that is missing. */}
+                    {departments.map((department) => {
+                      const row =
+                        rows.find((entry) => entry.id === department.id) ??
+                        undefined;
+                      return (
+                        <DepartmentCard
+                          key={department.id}
+                          department={department}
+                          members={staff}
+                          row={row}
+                          onChanged={reloadAfterChange}
+                        />
+                      );
+                    })}
+                  </>
                 )}
               </>
             )}
@@ -449,6 +469,8 @@ type MemberCardProps = {
   name: string;
   subtitle: string | null;
   departmentName: string | null;
+  /** Set when this member runs a department, as opposed to joining one. */
+  headsDepartmentName: string | null;
   departments: DepartmentDetail[];
   row: NonNullable<ReportingBreakdown["rows"][number]>;
   onChanged: () => void;
@@ -458,6 +480,7 @@ function MemberCard({
   name,
   subtitle,
   departmentName,
+  headsDepartmentName,
   departments,
   row,
   onChanged,
@@ -506,6 +529,11 @@ function MemberCard({
           <Text style={styles.memberMeta} numberOfLines={1}>
             {roleLine} · {deptLine}
           </Text>
+          {headsDepartmentName ? (
+            <Text style={styles.headBadge} numberOfLines={1}>
+              Head of {headsDepartmentName}
+            </Text>
+          ) : null}
         </View>
 
         <Icon
@@ -565,13 +593,70 @@ function MemberCard({
 }
 
 type DepartmentCardProps = {
-  name: string;
-  memberCount: number;
-  row: NonNullable<ReportingBreakdown["rows"][number]>;
+  department: DepartmentDetail;
+  members: StaffUser[];
+  /**
+   * The department's reporting row, absent when it has recorded no activity.
+   * Optional rather than defaulted to zeros because a fabricated row of zeros
+   * and a genuinely inactive department look identical on screen, and only one
+   * of them is true.
+   */
+  row: BreakdownRow | undefined;
+  onChanged: () => void;
 };
 
-function DepartmentCard({ name, memberCount, row }: DepartmentCardProps) {
+function DepartmentCard({
+  department,
+  members,
+  row,
+  onChanged,
+}: DepartmentCardProps) {
+  const { token } = useAuth();
   const [expanded, setExpanded] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const headId = department.headId ?? null;
+  const headName = department.head?.name ?? null;
+
+  // Only members of this department can lead it. The server refuses anybody
+  // else, so offering them here would produce a picker that looks reasonable
+  // and then fails — the worst of both.
+  const candidates = members.filter(
+    (member) => member.departmentId === department.id
+  );
+
+  // A person can lead only one department, so somebody already heading another
+  // one is shown struck through rather than hidden. Removing them would make
+  // the constraint invisible, and "why isn't Grace an option?" is the question
+  // this picker exists to answer.
+  const runsElsewhere = (member: StaffUser) =>
+    member.headsDepartmentId !== null &&
+    member.headsDepartmentId !== undefined &&
+    member.headsDepartmentId !== department.id;
+
+  async function appoint(nextHeadId: string | null) {
+    if (!token || nextHeadId === headId) return;
+
+    try {
+      setBusy(true);
+      await apiFetch(`/departments/${department.id}/head`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ headId: nextHeadId }),
+      });
+      onChanged();
+    } catch (error) {
+      Alert.alert(
+        "Unable to change head",
+        error instanceof Error ? error.message : "Please try again."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const memberLabel = `${department.memberCount} ${
+    department.memberCount === 1 ? "member" : "members"
+  }`;
 
   return (
     <Card style={styles.memberCard}>
@@ -585,10 +670,16 @@ function DepartmentCard({ name, memberCount, row }: DepartmentCardProps) {
 
         <View style={styles.memberTextCol}>
           <Text style={styles.memberName} numberOfLines={1}>
-            {name}
+            {department.name}
           </Text>
-          <Text style={styles.memberMeta}>
-            {memberCount} {memberCount === 1 ? "member" : "members"}
+          {/* Naming the head on the collapsed card is the point of the whole
+              model: "who runs this?" should be answerable without expanding
+              anything, and a department with nobody appointed should say so
+              plainly rather than just omitting it. */}
+          <Text style={styles.memberMeta} numberOfLines={1}>
+            {headName
+              ? `${memberLabel} · Headed by ${headName}`
+              : `${memberLabel} · No head`}
           </Text>
         </View>
 
@@ -599,16 +690,63 @@ function DepartmentCard({ name, memberCount, row }: DepartmentCardProps) {
         />
       </Pressable>
 
-      <BreakdownBody row={row} />
+      {row ? <BreakdownBody row={row} /> : null}
 
       {expanded ? (
         <View style={styles.expandArea}>
-          <Text style={styles.expandLabel}>Snapshot</Text>
+          <Text style={styles.expandLabel}>Department head</Text>
           <Text style={styles.memberMeta}>
-            Clients won {row.wonCount} · Won {formatAmount(row.wonValue)} ·
-            Active proposals {formatAmount(row.activeProposalValue)} · Lost{" "}
-            {formatAmount(row.lostValue)}
+            The head owns every new deal raised here by default, so Marketing
+            does not have to pick an owner each time. Naming somebody else is
+            still allowed, with a reason.
           </Text>
+
+          <View style={styles.chipWrap}>
+            <Chip
+              label="No head"
+              selected={headId === null}
+              onPress={() => appoint(null)}
+            />
+
+            {candidates.map((member) => (
+              <Chip
+                key={member.id}
+                label={
+                  runsElsewhere(member)
+                    ? `${member.name} — runs another`
+                    : member.name
+                }
+                selected={headId === member.id}
+                disabled={runsElsewhere(member)}
+                onPress={() => appoint(member.id)}
+              />
+            ))}
+          </View>
+
+          {candidates.length === 0 ? (
+            <Text style={styles.emptyHint}>
+              No Partners or Managers in this department yet — add members to
+              it first.
+            </Text>
+          ) : null}
+
+          {busy ? (
+            <ActivityIndicator
+              color={tokens.color.brand}
+              style={styles.busy}
+            />
+          ) : null}
+
+          {row ? (
+            <>
+              <Text style={styles.expandLabel}>Snapshot</Text>
+              <Text style={styles.memberMeta}>
+                Clients won {row.wonCount} · Won {formatAmount(row.wonValue)} ·
+                Active proposals {formatAmount(row.activeProposalValue)} · Lost{" "}
+                {formatAmount(row.lostValue)}
+              </Text>
+            </>
+          ) : null}
         </View>
       ) : null}
     </Card>
@@ -917,6 +1055,12 @@ const styles = StyleSheet.create({
   memberMeta: {
     ...tokens.type.caption,
     color: tokens.color.inkMuted,
+  },
+
+  headBadge: {
+    ...tokens.type.caption,
+    fontWeight: "700",
+    color: tokens.color.brand,
   },
 
   pipelineRow: {

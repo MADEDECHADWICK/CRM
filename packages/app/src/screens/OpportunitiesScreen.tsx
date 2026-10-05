@@ -14,10 +14,13 @@ import {
 import {
   ALLOWED_TRANSITIONS,
   ApiError,
-  createApiClient,
   formatAmount,
   LEAD_SOURCES,
   LEAD_SOURCE_LABELS,
+  needsOwnerOverrideReason,
+  canReassign,
+  ownerEligible,
+  rankOwnerCandidates,
   RAG_LABELS,
   type DepartmentDetail,
   type LeadSource,
@@ -53,9 +56,7 @@ import {
 import { useAuth } from "../auth/AuthContext";
 
 import { DateField, toNoonUTC } from "../components/DateField";
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
-const apiFetch = createApiClient(API_URL);
+import { apiFetch } from "../api";
 
 type FilterKey =
   | "all"
@@ -314,6 +315,10 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [departmentId, setDepartmentId] = useState<string | null>(null);
   const [ownerId, setOwnerId] = useState<string | null>(null);
+  // Only ever shown and sent when the chosen owner is not the department's
+  // head — a deviation from the default that somebody may need to read about
+  // later.
+  const [ownerOverrideReason, setOwnerOverrideReason] = useState("");
 
   // BR-018: the source is mandatory and has no default, so the picker starts
   // empty. Preselecting something would reintroduce exactly the silent
@@ -324,14 +329,29 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
 
   const [submitting, setSubmitting] = useState(false);
 
-  const owners = useMemo(
-    () =>
-      staff.filter(
-        (member) =>
-          member.role === "PARTNER" || member.role === "MANAGER"
-      ),
-    [staff]
-  );
+  // The department's head, who owns anything raised in it by default. Read from
+// the department already in hand rather than by looking the person up again.
+const departmentHeadId = useMemo(
+  () => departments.find((dept) => dept.id === departmentId)?.headId ?? null,
+  [departments, departmentId]
+);
+
+// Filtered and ordered by the shared policy: only owner-eligible roles, with
+// the department head first. The previous hand-written
+// `role === "PARTNER" || role === "MANAGER"` is exactly what ownerEligible
+// exists to replace — it was a fourth copy of a rule that lives in the API, and
+// a copy is how a new role silently ends up in the picker and then rejected on
+// submit.
+const owners = useMemo(
+  () => rankOwnerCandidates(ownerEligible(staff), departmentHeadId),
+  [staff, departmentHeadId]
+);
+
+// True when the chosen owner is not the head, i.e. when a reason is owed. The
+// same predicate the server applies, so the field appears exactly when the
+// request would otherwise be refused.
+const ownerIsOverride =
+  ownerId !== null && needsOwnerOverrideReason(departmentHeadId, ownerId);
 
   useEffect(() => {
     let active = true;
@@ -345,12 +365,7 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
         if (!active) return;
         setOrganizations(orgs);
         setDepartments(depts);
-        setStaff(
-          users.filter(
-            (member) =>
-              member.role === "PARTNER" || member.role === "MANAGER"
-          )
-        );
+        setStaff(users);
       })
       .catch((error) => {
         if (!active) return;
@@ -376,6 +391,17 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
       Alert.alert(
         "Missing details",
         "Pick an organization, a department and an owner (Partner/Manager)."
+      );
+      return;
+    }
+    if (ownerIsOverride && !ownerOverrideReason.trim()) {
+      // Checked here as well as on the server. The server would reject it
+      // either way, but asking before submitting means the user is told what
+      // is missing while they can still see which owner they picked, instead of
+      // after a round trip.
+      Alert.alert(
+        "Reason required",
+        "This deal's department has a head, so say why somebody else is owning it."
       );
       return;
     }
@@ -416,6 +442,12 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
           ownerId,
           stage,
           leadSource,
+          // Sent only for a deviation from the department head. The server
+          // requires it in exactly this case and ignores it otherwise, so
+          // there is no reason to invent one for the default assignment.
+          ...(ownerIsOverride && ownerOverrideReason.trim()
+            ? { ownerOverrideReason: ownerOverrideReason.trim() }
+            : {}),
           ...(leadSource === "OTHER" && leadSourceNote.trim()
             ? { leadSourceNote: leadSourceNote.trim() }
             : {}),
@@ -498,30 +530,61 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
                 key={dept.id}
                 label={dept.name}
                 selected={departmentId === dept.id}
-                onPress={() =>
-                  setDepartmentId((current) =>
-                    current === dept.id ? null : dept.id
-                  )
-                }
+                onPress={() => {
+                  if (departmentId === dept.id) {
+                    setDepartmentId(null);
+                    setOwnerId(null);
+                    setOwnerOverrideReason("");
+                    return;
+                  }
+                  setDepartmentId(dept.id);
+                  // The head takes ownership by default. Pre-selecting them is
+                  // the whole point of appointing one: it turns "who owns
+                  // this?" from a question Marketing has to answer on every
+                  // deal into a default they only override when they have a
+                  // reason. A department with nobody appointed leaves the
+                  // choice open, because there is no default to fall back on.
+                  setOwnerId(dept.headId ?? null);
+                  setOwnerOverrideReason("");
+                }}
               />
             ))}
           </View>
 
-          <Text style={styles.formLabel}>Owner (Partner/Manager)</Text>
+          <Text style={styles.formLabel}>
+            Owner (Partner/Manager)
+            {departmentHeadId
+              ? " — department head by default"
+              : " — this department has no head, so choose one"}
+          </Text>
           <View style={styles.chipWrap}>
             {owners.map((member) => (
               <Chip
                 key={member.id}
-                label={member.name}
+                label={
+                  member.id === departmentHeadId ? `${member.name} (head)` : member.name
+                }
                 selected={ownerId === member.id}
-                onPress={() =>
+                onPress={() => {
                   setOwnerId((current) =>
                     current === member.id ? null : member.id
-                  )
-                }
+                  );
+                  setOwnerOverrideReason("");
+                }}
               />
             ))}
           </View>
+
+          {/* Rendered only for a genuine deviation, so the common case is not
+              asked to justify itself. */}
+          {ownerIsOverride && (
+            <TextFieldForm
+              label="Why not the department head?"
+              value={ownerOverrideReason}
+              onChangeText={setOwnerOverrideReason}
+              placeholder="e.g. Head is on leave; this is really Audit work"
+            />
+          )}
 
           <View style={styles.amountRow}>
             <View style={styles.amountFlex}>
@@ -670,7 +733,6 @@ type PipelineDetailProps = {
 
 function PipelineDetail({ id, onClose }: PipelineDetailProps) {
   const { token, user } = useAuth();
-  const isBD = user?.role === "MARKETING_BD";
 
   const [detail, setDetail] = useState<OpportunityDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -706,13 +768,34 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
   const [breachExplanation, setBreachExplanation] = useState("");
   const [breachBusy, setBreachBusy] = useState(false);
 
-  // Reassign owner form (BD only)
+  // Reassign owner form. Visibility is the shared policy's decision, not a
+  // role check of our own — see canHandOn below.
   const [owners, setOwners] = useState<UserLite[]>([]);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [newOwnerId, setNewOwnerId] = useState<string | null>(null);
   const [reassignNote, setReassignNote] = useState("");
   const [reassignBusy, setReassignBusy] = useState(false);
   const [reassignLoading, setReassignLoading] = useState(false);
+
+  // Whether this user may hand this deal on.
+  //
+  // This replaces an `isBD` gate, which was wrong in both directions: it hid
+  // the control from the Partner or Manager who actually owns the deal and is
+  // the one person who should always be able to hand it on, while offering it
+  // to a Marketing & BD user looking at a deal somebody else had already taken
+  // on. The rule depends on who owns the deal, so it cannot be answered by the
+  // viewer's role alone — which is why it asks the same function the server
+  // will ask.
+  const canHandOn = useMemo(() => {
+    if (!user || !detail) return false;
+    return canReassign(
+      { id: user.id, role: user.role },
+      {
+        ownerId: detail.owner?.id ?? null,
+        createdById: detail.createdBy?.id ?? "",
+      }
+    ).allowed;
+  }, [user, detail]);
 
   const openReassign = useCallback(async () => {
     if (!token || reassignOpen) return;
@@ -721,20 +804,9 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
     setReassignLoading(true);
     try {
       const users = await apiFetch<UserLite[]>("/users", token);
-      setOwners(
-        users.filter(
-          (member) =>
-            member.role === "PARTNER" || member.role === "MANAGER"
-        )
-      );
-      setNewOwnerId(
-        detail?.owner?.id ??
-          users.find(
-            (member) =>
-              member.role === "PARTNER" || member.role === "MANAGER"
-          )?.id ??
-          null
-      );
+      const eligible = ownerEligible(users);
+      setOwners(eligible);
+      setNewOwnerId(detail?.owner?.id ?? eligible[0]?.id ?? null);
     } catch (error) {
       Alert.alert(
         "Unable to load owners",
@@ -761,7 +833,11 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
         method: "POST",
         body: JSON.stringify({
           newOwnerId,
-          note: reassignNote.trim(),
+          // `reason`, not the old `note`. The server records this on the
+          // ownership history where it is distinguishable from a comment,
+          // and requires it — an unexplained handover is how a deal ends up
+          // parked with nobody accountable for it.
+          reason: reassignNote.trim(),
         }),
       });
       setReassignOpen(false);
@@ -1272,7 +1348,7 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
           </>
         ) : null}
 
-        {isBD ? (
+        {canHandOn ? (
           <>
             <Section
               title="Owner"

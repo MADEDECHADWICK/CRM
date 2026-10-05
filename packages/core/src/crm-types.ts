@@ -59,6 +59,9 @@ export type Department = {
   id: string;
   name: string;
   description?: string | null;
+  /// The person appointed to run this department, if one has been appointed.
+  headId?: string | null;
+  head?: Pick<UserLite, "id" | "name" | "role"> | null;
 };
 
 export type Organization = {
@@ -189,10 +192,26 @@ export type UserLite = {
   role: Role;
   departmentId?: string | null;
   department?: Department | null;
+  /**
+   * The department this user runs, when they run one.
+   *
+   * Carried on the user rather than left for the client to join up from the
+   * department list, because the client mostly needs the answer in the other
+   * direction: when appointing somebody as a head, the question is whether
+   * they already head a department somewhere else. A person can only head one,
+   * so the answer decides whether the action is even legal.
+   */
+  headsDepartmentId?: string | null;
 };
 
 // Staff records via POST/PATCH /users — only Partner and Manager roles can
 // be created today (a BD user is created by the seed, not the staff form).
+//
+// This is the compile-time half of the rule. The runtime half is
+// isOwnerEligible() in ownership.ts, which narrows to exactly this shape and
+// preserves any extra fields the caller selected. Reach for that rather than
+// re-filtering by hand: the two are kept aligned deliberately, and a screen
+// that hand-rolls its own filter is the place a fourth role would be missed.
 export type StaffUser = UserLite & {
   role: "PARTNER" | "MANAGER";
 };
@@ -254,9 +273,35 @@ export type OpportunityNote = {
   };
 };
 
+/**
+ * One entry in an opportunity's ownership history.
+ *
+ * Distinct from StageHistoryEntry, and deliberately so. A stage change and an
+ * ownership change are independent decisions that frequently happen at
+ * different times: a deal can move from Grace to Ken while sitting in PROPOSAL
+ * the whole time, and Ken can then move it on again without the stage ever
+ * changing. Folding both into one timeline made "who has owned this?" and
+ * "what stage was it in when they got it?" impossible to answer separately.
+ */
+export type OwnerChange = {
+  id: string;
+  /** Null only on the initial assignment, where there was no previous owner. */
+  fromOwnerId?: string | null;
+  toOwnerId: string;
+  changedById: string;
+  /** Mandatory, including on the initial assignment. */
+  reason: string;
+  changedAt: string;
+  fromOwner?: { id: string; name: string } | null;
+  toOwner: { id: string; name: string };
+  changedBy: { id: string; name: string };
+};
+
 export type OpportunityDetail = Opportunity & {
   owner?: { id: string; name: string } | null;
   createdBy?: { id: string; name: string } | null;
   notes?: OpportunityNote[];
   stageHistory?: StageHistoryEntry[];
+  /** Newest first, matching stageHistory's ordering. */
+  ownerChanges?: OwnerChange[];
 };

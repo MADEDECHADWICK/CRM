@@ -101,76 +101,101 @@ export async function sweepOverdueProposals(now: Date = new Date()): Promise<Swe
   const noteDueAt = new Date(now.getTime() + BREACH_NOTE_DUE_DAYS * 24 * 60 * 60 * 1000);
   const breached: string[] = [];
 
+  // One row must never be able to abandon the rest. A single transaction that
+  // fails — a dropped connection, a lock, a constraint on one record — used to
+  // throw straight out of this function and silently skip every remaining
+  // overdue deal until the next hourly run. Failures are counted and reported
+  // instead, so the sweep is best-effort per row rather than all-or-nothing.
+  const failures: string[] = [];
+
   for (const row of trulyOverdue) {
     const rag = ragFor(
       { stage: row.stage, proposalDueAt: row.proposalDueAt, proposalSubmittedAt: null },
       now
     );
 
-    await prisma.$transaction(async (tx) => {
-      // Re-read inside the transaction. Between the SELECT above and this
-      // write, a person may have submitted the proposal — and a job must
-      // never be the reason a real submission is overwritten.
-      const fresh = await tx.opportunity.findUnique({ where: { id: row.id } });
-      if (
-        !fresh ||
-        !BREACHABLE_STAGES.includes(fresh.stage) ||
-        fresh.proposalSubmittedAt ||
-        !fresh.proposalDueAt ||
-        fresh.proposalDueAt >= now
-      ) {
-        return;
-      }
+    try {
+      const flagged = await prisma.$transaction(async (tx) => {
+        // Re-read inside the transaction. Between the SELECT above and this
+        // write, a person may have submitted the proposal — and a job must
+        // never be the reason a real submission is overwritten.
+        const fresh = await tx.opportunity.findUnique({ where: { id: row.id } });
+        if (
+          !fresh ||
+          !BREACHABLE_STAGES.includes(fresh.stage) ||
+          fresh.proposalSubmittedAt ||
+          !fresh.proposalDueAt ||
+          fresh.proposalDueAt >= now
+        ) {
+          return false;
+        }
 
-      await tx.opportunity.update({
-        where: { id: row.id },
-        data: {
-          stage: "NOT_SUBMITTED",
-          stageEnteredAt: now,
-          proposalBreachedAt: now,
-          breachNoteRequired: true,
-          breachNoteDueAt: noteDueAt,
-          breachNoteClearedAt: null,
-        },
-      });
-
-      // The system is the actor here, not a person — ActorType.SYSTEM plus
-      // a systemReason is what keeps this transition as auditable as a
-      // manual one instead of being an unexplained gap in the history.
-      await tx.stageHistoryEntry.create({
-        data: {
-          opportunityId: row.id,
-          fromStage: fresh.stage,
-          toStage: "NOT_SUBMITTED",
-          changedById: null,
-          actorType: "SYSTEM",
-          reason: null,
-          systemReason:
-            `BD drafting deadline of ${fresh.proposalDueAt.toISOString().slice(0, 10)} ` +
-            `passed with nothing submitted (${rag.daysRemaining} days overdue).`,
-        },
-      });
-
-      // The debt becomes a real reminder on the assignee's own list rather
-      // than a column nobody looks at. Assigned to the owner when there is
-      // one; a deal with no owner is escalated in the reporting view
-      // instead, which is the more urgent problem anyway.
-      const assigneeId = fresh.ownerId;
-      if (assigneeId) {
-        await tx.followup.create({
+        await tx.opportunity.update({
+          where: { id: row.id },
           data: {
-            note: `Explain why "${fresh.title}" was not submitted by its BD deadline`,
-            type: "CALL",
-            dueAt: noteDueAt,
-            opportunityId: fresh.id,
-            assignedToId: assigneeId,
-            createdById: assigneeId,
+            stage: "NOT_SUBMITTED",
+            stageEnteredAt: now,
+            proposalBreachedAt: now,
+            breachNoteRequired: true,
+            breachNoteDueAt: noteDueAt,
+            breachNoteClearedAt: null,
           },
         });
-      }
-    });
 
-    breached.push(row.id);
+        // The system is the actor here, not a person — ActorType.SYSTEM plus
+        // a systemReason is what keeps this transition as auditable as a
+        // manual one instead of being an unexplained gap in the history.
+        await tx.stageHistoryEntry.create({
+          data: {
+            opportunityId: row.id,
+            fromStage: fresh.stage,
+            toStage: "NOT_SUBMITTED",
+            changedById: null,
+            actorType: "SYSTEM",
+            reason: null,
+            systemReason:
+              `BD drafting deadline of ${fresh.proposalDueAt.toISOString().slice(0, 10)} ` +
+              `passed with nothing submitted (${rag.daysRemaining} days overdue).`,
+          },
+        });
+
+        // The debt becomes a real reminder on the assignee's own list rather
+        // than a column nobody looks at. Assigned to the owner when there is
+        // one; a deal with no owner is escalated in the reporting view
+        // instead, which is the more urgent problem anyway.
+        const assigneeId = fresh.ownerId;
+        if (assigneeId) {
+          await tx.followup.create({
+            data: {
+              note: `Explain why "${fresh.title}" was not submitted by its BD deadline`,
+              type: "CALL",
+              dueAt: noteDueAt,
+              opportunityId: fresh.id,
+              assignedToId: assigneeId,
+              createdById: assigneeId,
+            },
+          });
+        }
+
+        return true;
+      });
+
+      // Only counted when this run actually moved the deal. The re-read above
+      // can legitimately decline, and reporting a decline as a breach would
+      // make the log lie about what the sweep did.
+      if (flagged) {
+        breached.push(row.id);
+      }
+    } catch (err) {
+      failures.push(row.id);
+      console.error(`[breach-sweep] could not sweep opportunity ${row.id}:`, err);
+    }
+  }
+
+  if (failures.length) {
+    console.error(
+      `[breach-sweep] ${failures.length} of ${trulyOverdue.length} overdue proposal(s) could not be swept this run`
+    );
   }
 
   return {

@@ -10,20 +10,35 @@ type ChipProps = {
   label: string;
   selected: boolean;
   onPress: () => void;
+  /**
+   * Renders the chip as unavailable and ignores presses.
+   *
+   * For options that are visible and relevant but cannot currently be chosen —
+   * somebody who already holds the one post that only one person may hold, for
+   * instance. Omitting them from the list entirely would hide the constraint
+   * that makes the picker look arbitrary, so they stay visible and explain
+   * themselves; the caller's own caption is where the reason belongs.
+   */
+  disabled?: boolean;
 };
 
-export function Chip({ label, selected, onPress }: ChipProps) {
+export function Chip({ label, selected, onPress, disabled }: ChipProps) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={disabled ? undefined : onPress}
       style={({ pressed }) => [
         styles.chip,
+        disabled && styles.chipDisabled,
         selected && styles.chipSelected,
-        pressed && !selected && styles.chipPressed,
+        pressed && !selected && !disabled && styles.chipPressed,
       ]}
     >
       <Text
-        style={[styles.label, selected && styles.labelSelected]}
+        style={[
+          styles.label,
+          disabled && styles.labelDisabled,
+          selected && styles.labelSelected,
+        ]}
       >
         {label}
       </Text>
@@ -43,6 +58,10 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.color.border,
   },
 
+  chipDisabled: {
+    opacity: 0.45,
+  },
+
   chipSelected: {
     backgroundColor: tokens.color.ink,
   },
@@ -51,6 +70,10 @@ const styles = StyleSheet.create({
     ...tokens.type.caption,
     fontWeight: "600",
     color: tokens.color.inkMuted,
+  },
+
+  labelDisabled: {
+    textDecorationLine: "line-through",
   },
 
   labelSelected: {

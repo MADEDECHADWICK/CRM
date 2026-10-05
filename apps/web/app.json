@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "CRM Web",
+    "slug": "crm-web",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "light",
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    }
+  }
+}

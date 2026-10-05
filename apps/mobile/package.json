@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@crm/app": "workspace:*",
     "@crm/core": "workspace:*",
     "@crm/ui": "workspace:*",
     "@expo/vector-icons": "^15.1.1",
     "@react-native-community/datetimepicker": "9.1.0",
-    "@shopify/react-native-skia": "2.6.2",
     "expo": "~57.0.21",
     "expo-status-bar": "~57.0.1",
     "nativewind": "^4.2.6",
@@ -19,8 +19,7 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-web": "^0.21.2",
     "react-native-worklets": "0.10.1",
-    "tailwindcss": "^4.3.3",
-    "victory-native": "^42.0.1"
+    "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

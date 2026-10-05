@@ -175,6 +175,16 @@ model User {
   /// Reference to the user's primary department.
 
   department          Department?         @relation("DepartmentUsers", fields: [departmentId], references: [id])
+
+  /// Departments this user is appointed to run.
+  ///
+  /// The inverse of Department.headId. It reads as a list because Prisma
+  /// models the inverse side of a one-to-one relation as an array, but
+  /// headId being @unique means it holds at most one entry. Where a user is
+  /// appointed head of the department they also belong to — the common case —
+  /// this and departmentId will name the same department.
+  headedDepartments   Department[]        @relation("DepartmentHead")
+
   /// Opportunities created by this user.
   createdOpprtunites  Opportunity[]       @relation("OpportunityCreatedBy")
   /// Opportunities currently owned or managed by this user.
@@ -194,6 +204,16 @@ model User {
 
   /// Notes created by this user.
   notes Note[]
+
+  /// Ownership handovers where this user was the previous owner.
+  ownershipHandoversFrom OwnerChange[] @relation("OwnerChangeFrom")
+
+  /// Ownership handovers where this user became the owner.
+  ownershipHandoversTo   OwnerChange[] @relation("OwnerChangeTo")
+
+  /// Ownership handovers this user performed, whether or not they were
+  /// involved in the deal as owner.
+  ownershipChangesMade   OwnerChange[] @relation("OwnerChangeBy")
 
   /// Follow-ups assigned to this user.
   assignedFollowups Followup[] @relation("FollowupAssignedTo")
@@ -238,7 +258,31 @@ model Department {
   /// Optional explanation of the department's purpose.
   description String?
 
+  /// The person appointed to run this department.
+  ///
+  /// @unique here is what enforces one half of the rule — a single person
+  /// cannot head two departments — and it does so in the schema rather than in
+  /// a route handler. A constraint that lives only in application code is one
+  /// direct API call away from not existing, and this is exactly the invariant
+  /// you would want to hold even if the UI enforced it perfectly.
+  ///
+  /// Nullable deliberately: a department can be opened before anybody is
+  /// appointed to run it, and until that happens assignment falls back to "any
+  /// Partner or Manager" rather than blocking Marketing from raising a deal
+  /// (see needsOwnerOverrideReason in @crm/core).
+  headId String? @unique
+
+  /// The department head, when one has been appointed.
+  ///
+  /// SetNull rather than Restrict: removing a user must never delete a
+  /// department. An unheaded department is a gap to fill, not a cascade.
+  head User? @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
+
   /// Users primarily associated with this department.
+  ///
+  /// Distinct from Department.head: this is membership, that is command.
+  /// A department has one head and any number of members, so the two facts
+  /// genuinely differ and are stored separately.
   users User[] @relation("DepartmentUsers")
 
   /// Opportunities being handled by this department.
@@ -576,6 +620,16 @@ model Opportunity {
   /// Notes associated with this opportunity.
   notes Note[]
 
+  /// Every change of owner, oldest first when ordered by changedAt.
+  ///
+  /// Reassignment is a first-class decision in this business — a Manager or
+  /// Partner hands a deal on when they cannot execute it — so it gets a real
+  /// table rather than a line of free text in Note. Note has no type
+  /// discriminator, which meant a handover was indistinguishable from any other
+  /// note and "who had this deal, and when did it move?" was unanswerable
+  /// without reading prose.
+  ownerChanges OwnerChange[]
+
   /// Follow-up activities associated with this opportunity.
   followups Followup[]
 
@@ -685,6 +739,74 @@ model StageHistoryEntry {
   /// Supports retrieving an opportunity's timeline in order.
   @@index([opportunityId, changedAt])
   /// Supports audit queries by user.
+  @@index([changedById])
+}
+
+/// Records every change of owner on an Opportunity.
+///
+/// Opportunity.ownerId holds who owns it *now* and answers "who do I ask?".
+/// This table holds how it got that way, and answers the two questions that
+/// ownership questions actually turn into: "how long has Grace had the Tax
+/// mandate?" and "who keeps passing work on instead of running it?"
+///
+/// The initial assignment is written here too, with fromOwnerId null, so the
+/// history is complete from the moment the deal exists. Starting it at the
+/// first handover would leave every deal looking as though it appeared from
+/// nowhere.
+model OwnerChange {
+  /// Primary UUID identifier.
+  id String @id @default(uuid())
+
+  /// Opportunity whose owner changed.
+  opportunityId String
+
+  /// The opportunity in question.
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  /// The previous owner.
+  ///
+  /// Null only on the initial assignment, where there was nobody before. Never
+  /// null on a handover: moving a deal to "nobody" is not a thing the business
+  /// does, so a missing from-owner on a later row means data loss, not intent.
+  fromOwnerId String?
+
+  /// Who owned the deal before this change.
+  fromOwner User? @relation("OwnerChangeFrom", fields: [fromOwnerId], references: [id], onDelete: SetNull)
+
+  /// The new owner.
+  toOwnerId String
+
+  /// Who owns the deal after this change.
+  toOwner User @relation("OwnerChangeTo", fields: [toOwnerId], references: [id], onDelete: Restrict)
+
+  /// Who made the change.
+  ///
+  /// Not the same as toOwnerId: a Partner handing a deal to a Manager is the
+  /// author of the handover but not its beneficiary, and a report asking "who
+  /// reassigned this?" needs the author.
+  changedById String
+
+  /// The person who performed the handover.
+  changedBy User @relation("OwnerChangeBy", fields: [changedById], references: [id], onDelete: Restrict)
+
+  /// Why the deal moved.
+  ///
+  /// Mandatory and not nullable, including on the initial assignment — the
+  /// same BR-010 discipline that forces a reason on a stage transition. An
+  /// unexplained handover is how a deal ends up quietly parked with nobody
+  /// accountable for it.
+  reason String
+
+  /// Exact time of the handover.
+  changedAt DateTime @default(now())
+
+  /// The ownership timeline, newest first, for one opportunity.
+  @@index([opportunityId, changedAt])
+  /// "What has Grace been handed?" across the whole book.
+  @@index([toOwnerId])
+  /// "What has Grace handed on?" — the workload-balance question.
+  @@index([fromOwnerId])
+  /// Audit by actor.
   @@index([changedById])
 }
 

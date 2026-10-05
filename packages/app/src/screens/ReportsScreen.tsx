@@ -10,10 +10,9 @@ import {
   View,
 } from "react-native";
 
-import DateTimePicker from "@react-native-community/datetimepicker";
+import { DateTimeInput as DateTimePicker } from "../components/DateTimeInput";
 
 import {
-  createApiClient,
   formatAmount,
   toAmount,
   type Opportunity,
@@ -44,9 +43,7 @@ import {
   StageBarChart,
 } from "../components/charts";
 import { useAuth } from "../auth/AuthContext";
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
-const apiFetch = createApiClient(API_URL);
+import { apiFetch } from "../api";
 
 function compactKES(amount: number): string {
   if (amount >= 1_000_000) return `KES ${(amount / 1_000_000).toFixed(1)}M`;

@@ -3,6 +3,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "../../lib/prisma";
 import { requireAuth, AuthedRequest } from "../../middleware/authorize";
+import { canManageStaff } from "@crm/core";
 
 export const usersRouter = Router();
 usersRouter.use(requireAuth);
@@ -10,8 +11,10 @@ usersRouter.use(requireAuth);
 // Marketing & BD administers the team — it creates staff, assigns them to
 // departments, and reassigns them between departments. Partners and Managers
 // never create or edit staff, only BD does (the Team screen is BD-only).
+// canManageStaff is the shared definition, so a role added later is covered
+// here without revisiting every screen that gates on it.
 function isBD(user: AuthedRequest["user"]): boolean {
-  return user?.role === "MARKETING_BD";
+  return user ? canManageStaff(user.role) : false;
 }
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -41,7 +44,35 @@ const SELECT_FIELDS = {
   role: true,
   departmentId: true,
   department: { select: { id: true, name: true } },
+  // Read only to derive headsDepartmentId below. A person leads at most one
+  // department, so the array holds at most one entry — but the schema models
+  // the inverse side of a one-to-one as a list, and flattening it here keeps
+  // that detail out of every client.
+  headedDepartments: { select: { id: true }, take: 1 },
 } as const;
+
+// Turns the one-headed-department relation into the flat field clients want.
+// Present because the question clients actually ask runs the other way: when
+// appointing somebody as a head, the useful fact is whether they already run a
+// department somewhere else, and they cannot answer that from the department
+// list alone.
+const toUserPayload = (user: {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  departmentId: string | null;
+  department: { id: string; name: string } | null;
+  headedDepartments: { id: string }[];
+}) => ({
+  id: user.id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  departmentId: user.departmentId,
+  department: user.department,
+  headsDepartmentId: user.headedDepartments[0]?.id ?? null,
+});
 
 // Staff list — powers owner pickers across the app and the Team screen's
 // member list. Never exposes passwordHash (BR: hashes stay server-side).
@@ -55,7 +86,7 @@ usersRouter.get("/", async (req: AuthedRequest, res) => {
     orderBy: { name: "asc" },
   });
 
-  res.json({ success: true, data: users });
+  res.json({ success: true, data: users.map(toUserPayload) });
 });
 
 // Add a staff member (Partner or Manager). BD only. New hires get the demo
@@ -112,7 +143,7 @@ usersRouter.post("/", async (req: AuthedRequest, res) => {
     select: SELECT_FIELDS,
   });
 
-  res.status(201).json({ success: true, data: user });
+  res.status(201).json({ success: true, data: toUserPayload(user) });
 });
 
 // Update a staff member — the school maths: reassign department, promote
@@ -174,5 +205,5 @@ usersRouter.patch("/:id", async (req: AuthedRequest, res) => {
     });
   }
 
-  res.json({ success: true, data: user });
+  res.json({ success: true, data: toUserPayload(user) });
 });

@@ -17,8 +17,15 @@ import {
   LEAD_SOURCES,
   RAG_LABELS,
   ragFor,
+  canCreateOpportunity,
   type Stage,
 } from "@crm/core";
+import {
+  resolveOwnerForCreation,
+  recordInitialOwnership,
+  reassignOpportunity,
+  OwnershipRejected,
+} from "./ownership";
 
 export const opportunitiesRouter = Router();
 opportunitiesRouter.use(requireAuth);
@@ -76,7 +83,16 @@ const createBodySchema = z.object({
   service: z.string().min(1),
   amount: z.number().positive().optional(),
   currency: z.string().optional(),
+  // Optional on the wire but never optional in the database: omitted means
+  // "the department head", resolved server-side. The head being the default is
+  // the reason one is appointed, so requiring every client to restate it would
+  // be busywork that exists only to be gotten wrong.
   ownerId: z.string().uuid().optional(),
+  // Required only when ownerId is not the department's head. Optional here so
+  // the server can decide whether it is actually needed — making it
+  // unconditionally required would ask for a justification on the common case
+  // where there is no deviation to explain.
+  ownerOverrideReason: z.string().optional(),
   stage: z.enum(["PROSPECT", "LEAD"] satisfies readonly Stage[]).optional(),
   // BR-018: the source of a lead is mandatory, with no server-side default.
   // Defaulting it would defeat the reason the field exists — an unattributed
@@ -92,9 +108,13 @@ const createBodySchema = z.object({
   leadReceivedAt: z.string().datetime().optional(),
 });
 
+// `reason` is mandatory and unconditional. It was briefly optional with `note`
+// accepted as a legacy alias, on the assumption that older app builds were
+// still in circulation; keeping two names for one field is how the next person
+// reads the route and concludes the reason is optional.
 const reassignBodySchema = z.object({
   newOwnerId: z.string().uuid(),
-  note: z.string().min(1),
+  reason: z.string().min(1),
 });
 
 // List with optional ?stage= and ?q= filters, always inside the caller's
@@ -140,7 +160,11 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
       ...(ownerId && canFilterOwner ? { ownerId } : {}),
       ...(departmentId ? { departmentId } : {}),
     },
-    include: { organization: true, department: true, owner: { select: { id: true, name: true } } },
+    include: {
+      organization: true,
+      department: { include: { head: { select: { id: true, name: true, role: true } } } },
+      owner: { select: { id: true, name: true } },
+    },
     orderBy: { stageEnteredAt: "desc" },
   });
 
@@ -171,7 +195,10 @@ opportunitiesRouter.get("/:id", async (req: AuthedRequest, res) => {
     },
     include: {
       organization: true,
-      department: true,
+      // The head travels with the department because "who should own this"
+      // is the first question the reassignment screen asks, and making the
+      // client join it up from a second request would leave the two out of step.
+      department: { include: { head: { select: { id: true, name: true, role: true } } } },
       owner: { select: { id: true, name: true } },
       createdBy: { select: { id: true, name: true } },
       notes: {
@@ -179,6 +206,16 @@ opportunitiesRouter.get("/:id", async (req: AuthedRequest, res) => {
         orderBy: { createdAt: "desc" },
       },
       stageHistory: { orderBy: { changedAt: "desc" } },
+      // Kept apart from stageHistory: a deal can change hands while sitting in
+      // one stage, so interleaving the two would answer neither question.
+      ownerChanges: {
+        include: {
+          fromOwner: { select: { id: true, name: true } },
+          toOwner: { select: { id: true, name: true } },
+          changedBy: { select: { id: true, name: true } },
+        },
+        orderBy: { changedAt: "desc" },
+      },
       followups: { orderBy: { dueAt: "asc" } },
     },
   });
@@ -195,8 +232,10 @@ opportunitiesRouter.get("/:id", async (req: AuthedRequest, res) => {
 
 // Create a Lead against an existing organization + department — BR-003
 // makes the service being offered mandatory at creation. BD can also raise
-// a deal straight into PROSPECT (an identified, not-yet-qualified org) and
-// assign it to a Partner/Manager owner immediately.
+// a deal straight into PROSPECT (an identified, not-yet-qualified org).
+//
+// Ownership is resolved rather than restated by the client: omit ownerId and
+// the department head owns it, name somebody else and you owe a reason why.
 opportunitiesRouter.post("/", async (req: AuthedRequest, res) => {
   const parsed = createBodySchema.safeParse(req.body);
   if (!parsed.success) {
@@ -223,43 +262,80 @@ opportunitiesRouter.post("/", async (req: AuthedRequest, res) => {
     });
   }
 
-  // Ownership is real: a deal must belong to a Partner or Manager (a
-  // reporting scope that can actually own opportunities), never a BD user.
-  if (parsed.data.ownerId) {
-    const owner = await prisma.user.findUnique({
-      where: { id: parsed.data.ownerId },
-      select: { role: true },
+  // Role is checked against the shared policy rather than inferred from the
+  // fact that the request is authenticated. Every current role may raise a
+  // deal, so this never rejects anybody today — which is the point. The old
+  // code had no check at all, and the rule it was missing existed only as a
+  // hidden button in the mobile UI, where a POST from anywhere else was
+  // accepted. When a fourth role is added it will be denied here by default
+  // instead of inheriting a permission nobody granted.
+  if (!canCreateOpportunity(req.user!.role)) {
+    return res.status(403).json({
+      success: false,
+      error: {
+        code: "CREATOR_NOT_PERMITTED",
+        message: "Your role cannot raise new opportunities.",
+      },
     });
-    if (owner?.role !== "PARTNER" && owner?.role !== "MANAGER") {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: "INVALID_OWNER",
-          message: "Owner must be a Partner or Manager.",
-        },
-      });
-    }
   }
 
-  const opp = await prisma.opportunity.create({
-    data: {
-      title: parsed.data.title,
-      organizationId: parsed.data.organizationId,
+  // Resolves the owner, defaults to the department head, and refuses a
+  // deviation that comes without a reason. This replaces the previous
+  // `ownerId ?? req.user!.id` fallback, which let a Marketing & BD user become
+  // the owner of their own deal by omitting the field — the exact thing the
+  // Partner/Manager owner rule exists to prevent, reachable through a
+  // one-character omission.
+  let owner: { ownerId: string; departmentHeadId: string | null };
+  try {
+    owner = await resolveOwnerForCreation({
       departmentId: parsed.data.departmentId,
-      service: parsed.data.service,
-      stage: parsed.data.stage ?? "LEAD",
-      amount: parsed.data.amount ?? null,
-      currency: parsed.data.currency ?? "KES",
-      createdById: req.user!.id,
-      ownerId: parsed.data.ownerId ?? req.user!.id,
-      stageEnteredAt: new Date(),
-      leadSource: parsed.data.leadSource,
-      leadSourceNote: parsed.data.leadSourceNote?.trim() || null,
-      leadReceivedAt: parsed.data.leadReceivedAt
-        ? new Date(parsed.data.leadReceivedAt)
-        : new Date(),
-    },
-    include: { organization: true, department: true },
+      requestedOwnerId: parsed.data.ownerId,
+      overrideReason: parsed.data.ownerOverrideReason,
+    });
+  } catch (err: any) {
+    if (err instanceof OwnershipRejected) {
+      return res.status(err.status).json({
+        success: false,
+        error: { code: err.code, message: err.message, field: err.field },
+      });
+    }
+    throw err;
+  }
+
+  // The deal and the first entry of its ownership history are committed
+  // together. A deal whose history starts somewhere other than its creation is
+  // exactly the gap the OwnerChange table was added to close.
+  const opp = await prisma.$transaction(async (tx) => {
+    const created = await tx.opportunity.create({
+      data: {
+        title: parsed.data.title,
+        organizationId: parsed.data.organizationId,
+        departmentId: parsed.data.departmentId,
+        service: parsed.data.service,
+        stage: parsed.data.stage ?? "LEAD",
+        amount: parsed.data.amount ?? null,
+        currency: parsed.data.currency ?? "KES",
+        createdById: req.user!.id,
+        ownerId: owner.ownerId,
+        stageEnteredAt: new Date(),
+        leadSource: parsed.data.leadSource,
+        leadSourceNote: parsed.data.leadSourceNote?.trim() || null,
+        leadReceivedAt: parsed.data.leadReceivedAt
+          ? new Date(parsed.data.leadReceivedAt)
+          : new Date(),
+      },
+      include: { organization: true, department: true },
+    });
+
+    await recordInitialOwnership(tx, {
+      opportunityId: created.id,
+      ownerId: owner.ownerId,
+      changedById: req.user!.id,
+      departmentHeadId: owner.departmentHeadId,
+      overrideReason: parsed.data.ownerOverrideReason,
+    });
+
+    return created;
   });
 
   res.status(201).json({ success: true, data: withRag(opp) });
@@ -452,9 +528,15 @@ opportunitiesRouter.post("/:id/breach-note", async (req: AuthedRequest, res) => 
   }
 });
 
-// Reassignment — its own kind of decision, tracked as a Note (not a
-// StageHistoryEntry, since the stage itself isn't changing here, only
-// ownership).
+// Reassignment — its own kind of decision, so its own record rather than a
+// Note or a StageHistoryEntry. Neither of those can hold it: the stage is not
+// changing, and a Note carries no type, so a handover was previously
+// indistinguishable from any other comment.
+//
+// Permission is decided by @crm/core against the deal as it stands inside the
+// transaction. This route used to have no authorization at all beyond being
+// signed in — any user could hand any deal to anybody, including a Marketing
+// & BD user, and the only thing recorded was a line of free text.
 opportunitiesRouter.post("/:id/reassign", async (req: AuthedRequest, res) => {
   const params = idParamSchema.safeParse(req.params);
   const body = reassignBodySchema.safeParse(req.body);
@@ -465,19 +547,21 @@ opportunitiesRouter.post("/:id/reassign", async (req: AuthedRequest, res) => {
     });
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const opp = await tx.opportunity.update({
-      where: { id: params.data.id },
-      data: { ownerId: body.data.newOwnerId },
+  try {
+    const updated = await reassignOpportunity({
+      opportunityId: params.data.id,
+      newOwnerId: body.data.newOwnerId,
+      reason: body.data.reason,
+      actor: { id: req.user!.id, role: req.user!.role },
     });
-    await tx.note.create({
-      data: {
-        body: body.data.note.trim(),
-        authorId: req.user!.id,
-        opportunityId: opp.id,
-      },
-    });
-    return opp;
-  });
-  res.json({ success: true, data: updated });
+    res.json({ success: true, data: updated });
+  } catch (err: any) {
+    if (err instanceof OwnershipRejected) {
+      return res.status(err.status).json({
+        success: false,
+        error: { code: err.code, message: err.message, field: err.field },
+      });
+    }
+    res.status(400).json({ success: false, error: { code: "INTERNAL_ERROR", message: err.message } });
+  }
 });

@@ -7,17 +7,18 @@ import {
 } from "react";
 
 import {
-  createApiClient,
   type AuthUser,
   type LoginRequest,
   type LoginResponse,
 } from "@crm/core";
 
-const API_URL =
-  process.env.EXPO_PUBLIC_API_URL ??
-  "http://localhost:4000";
-
-const apiFetch = createApiClient(API_URL);
+import { apiFetch } from "../api";
+import {
+  clearSession,
+  loadSession,
+  saveSession,
+} from "./sessionStorage";
+import type { StoredSession } from "./sessionStorage.types";
 
 type AuthContextValue = {
   token: string | null;
@@ -35,8 +36,12 @@ export function AuthProvider({
 }: {
   children: ReactNode;
 }) {
-  const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [session, setSession] = useState<StoredSession | null>(() =>
+    loadSession()
+  );
+
+  const token = session?.token ?? null;
+  const user = session?.user ?? null;
 
   async function login(credentials: LoginRequest) {
     const response = await apiFetch<LoginResponse>(
@@ -48,13 +53,15 @@ export function AuthProvider({
       }
     );
 
-    setToken(response.token);
-    setUser(response.user);
+    const next: StoredSession = { token: response.token, user: response.user };
+
+    saveSession(next);
+    setSession(next);
   }
 
   function logout() {
-    setToken(null);
-    setUser(null);
+    clearSession();
+    setSession(null);
   }
 
   const value = useMemo(

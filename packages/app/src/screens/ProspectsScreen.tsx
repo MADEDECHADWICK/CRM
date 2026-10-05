@@ -12,7 +12,6 @@ import {
 } from "react-native";
 
 import {
-  createApiClient,
   type Contact,
   type Organization,
   tokens,
@@ -31,9 +30,7 @@ import {
 
 import { useAuth } from "../auth/AuthContext";
 import { ContactFormSheet } from "../components/ContactFormSheet";
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
-const apiFetch = createApiClient(API_URL);
+import { apiFetch } from "../api";
 
 function initials(name: string): string {
   return name

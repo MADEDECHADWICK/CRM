@@ -10,7 +10,6 @@ import {
 } from "react-native";
 
 import {
-  createApiClient,
   type Contact,
   type Opportunity,
   type ReportingSummary,
@@ -32,9 +31,7 @@ import {
 
 import { countByStage, DonutChart, pipelineDonut } from "../components/charts";
 import { useAuth } from "../auth/AuthContext";
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000";
-const apiFetch = createApiClient(API_URL);
+import { apiFetch } from "../api";
 
 /** Contacts shown before the user starts searching. */
 const CONTACTS_PREVIEW = 3;
