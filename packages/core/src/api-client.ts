@@ -60,7 +60,10 @@ export class ApiError extends Error {
  * imported. Binding the URL eagerly at construction time would freeze whichever
  * value happened to exist first.
  */
-export function createApiClient(baseUrl: string | (() => string)) {
+export function createApiClient(
+  baseUrl: string | (() => string),
+  hooks: { onUnauthorized?: () => void } = {}
+) {
   const resolveBaseUrl = () =>
     typeof baseUrl === "function" ? baseUrl() : baseUrl;
 
@@ -84,6 +87,17 @@ export function createApiClient(baseUrl: string | (() => string)) {
         ...options.headers,
       },
     });
+
+    // A 401 means the stored session is no longer usable (expired or signed
+    // out). Tell the app so it can drop the session and return to the login
+    // screen, instead of leaving every screen failing in place.
+    if (response.status === 401 && hooks.onUnauthorized) {
+      try {
+        hooks.onUnauthorized();
+      } catch {
+        // A throwing handler must never mask the real API error below.
+      }
+    }
 
     const contentType =
       response.headers.get("content-type") ?? "";

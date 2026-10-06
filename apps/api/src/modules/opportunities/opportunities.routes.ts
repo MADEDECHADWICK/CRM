@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
-import { requireAuth, AuthedRequest, opportunityScope } from "../../middleware/authorize";
+import { requireAuth, AuthedRequest, opportunityScope, scopedOpportunity } from "../../middleware/authorize";
 import { transitionOpportunity, TransitionRejected } from "./transitionOpportunity";
 import {
   setProposalDeadline,
@@ -26,6 +26,7 @@ import {
   reassignOpportunity,
   OwnershipRejected,
 } from "./ownership";
+import { paginationSchema, pageOf } from "../../lib/pagination";
 
 export const opportunitiesRouter = Router();
 opportunitiesRouter.use(requireAuth);
@@ -55,16 +56,18 @@ function withRag<T extends {
 
 // Derived from STAGES rather than hand-listed, so a newly added pipeline
 // stage is immediately valid here instead of being rejected with a 400.
-const listQuerySchema = z.object({
-  stage: z.enum(STAGES).optional(),
-  rag: z.enum(["NO_DEADLINE", "GREEN", "AMBER", "RED", "OVERDUE", "SUBMITTED"]).optional(),
-  q: z.string().optional(),
-  period: z.enum(REPORT_PERIODS).optional(),
-  from: z.string().datetime().optional(),
-  to: z.string().datetime().optional(),
-  ownerId: z.string().uuid().optional(),
-  departmentId: z.string().uuid().optional(),
-});
+const listQuerySchema = z
+  .object({
+    stage: z.enum(STAGES).optional(),
+    rag: z.enum(["NO_DEADLINE", "GREEN", "AMBER", "RED", "OVERDUE", "SUBMITTED"]).optional(),
+    q: z.string().optional(),
+    period: z.enum(REPORT_PERIODS).optional(),
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional(),
+    ownerId: z.string().uuid().optional(),
+    departmentId: z.string().uuid().optional(),
+  })
+  .extend(paginationSchema.shape);
 
 const transitionBodySchema = z.object({
   toStage: z.enum(STAGES),
@@ -166,6 +169,7 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
       owner: { select: { id: true, name: true } },
     },
     orderBy: { stageEnteredAt: "desc" },
+    ...pageOf(query.data),
   });
 
   // Filtered and decorated here rather than in the query. RAG depends on
@@ -369,6 +373,17 @@ opportunitiesRouter.post("/:id/transition", async (req: AuthedRequest, res) => {
     });
   }
 
+  // Authorization, not just authentication: the deal must be inside the
+  // caller's scope. Reads enforce this; a write that skips it is how a
+  // Manager ends up transitioning somebody else's deal.
+  const scoped = await scopedOpportunity(req.user, params.data.id);
+  if (!scoped) {
+    return res.status(404).json({
+      success: false,
+      error: { code: "NOT_FOUND", message: "Opportunity not found or not in your scope." },
+    });
+  }
+
   try {
     const result = await transitionOpportunity({
       opportunityId: params.data.id,
@@ -392,6 +407,15 @@ opportunitiesRouter.post("/:id/transition", async (req: AuthedRequest, res) => {
           message: err.message,
           missingFields: err.missing,
         },
+      });
+    }
+    // The transition ran at Serializable isolation; a concurrent edit to the
+    // same deal aborts one of them with a serialization failure. That is a
+    // retryable conflict, not a bad request.
+    if (err?.code === "P2034") {
+      return res.status(409).json({
+        success: false,
+        error: { code: "CONFLICT", message: "The deal changed while you were editing it. Reload and try again." },
       });
     }
     res.status(400).json({ success: false, error: { code: "TRANSITION_REJECTED", message: err.message } });
@@ -431,6 +455,14 @@ opportunitiesRouter.post("/:id/deadline", async (req: AuthedRequest, res) => {
     });
   }
 
+  const scoped = await scopedOpportunity(req.user, params.data.id);
+  if (!scoped) {
+    return res.status(404).json({
+      success: false,
+      error: { code: "NOT_FOUND", message: "Opportunity not found or not in your scope." },
+    });
+  }
+
   try {
     const updated = await setProposalDeadline({
       opportunityId: params.data.id,
@@ -457,6 +489,14 @@ opportunitiesRouter.delete("/:id/deadline", async (req: AuthedRequest, res) => {
     return res.status(403).json({
       success: false,
       error: { code: "FORBIDDEN", message: "Only BD, Partner or Manager roles can clear a proposal deadline." },
+    });
+  }
+
+  const scoped = await scopedOpportunity(req.user, params.data.id);
+  if (!scoped) {
+    return res.status(404).json({
+      success: false,
+      error: { code: "NOT_FOUND", message: "Opportunity not found or not in your scope." },
     });
   }
 
@@ -492,14 +532,15 @@ opportunitiesRouter.post("/:id/breach-note", async (req: AuthedRequest, res) => 
   // The obligation belongs to the person who owed the deadline, but a Manager
   // or BD may record it on their behalf when someone is on leave — the debt
   // still has to be closable, or an absent assignee would block it forever.
-  const opp = await prisma.opportunity.findUnique({
-    where: { id: params.data.id },
-    select: { ownerId: true, breachNoteRequired: true },
+  // Scoped: a Manager may stand in only for a deal she can actually see.
+  const opp = await scopedOpportunity(req.user, params.data.id, {
+    ownerId: true,
+    breachNoteRequired: true,
   });
   if (!opp) {
     return res.status(404).json({
       success: false,
-      error: { code: "NOT_FOUND", message: "Opportunity not found." },
+      error: { code: "NOT_FOUND", message: "Opportunity not found or not in your scope." },
     });
   }
 

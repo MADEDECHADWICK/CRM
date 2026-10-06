@@ -1,13 +1,14 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
-import { requireAuth, AuthedRequest, opportunityScope } from "../../middleware/authorize";
+import { requireAuth, AuthedRequest, opportunityScope, scopedOpportunity } from "../../middleware/authorize";
+import { paginationSchema, pageOf } from "../../lib/pagination";
 
 export const notesRouter = Router();
 notesRouter.use(requireAuth);
 
 const createSchema = z.object({
-  body: z.string().min(1),
+  body: z.string().trim().min(1),
   opportunityId: z.string().uuid().optional(),
   organizationId: z.string().uuid().optional(),
 });
@@ -19,6 +20,14 @@ const createSchema = z.object({
 notesRouter.get("/", async (req: AuthedRequest, res) => {
   const scope = opportunityScope(req.user);
   const unrestricted = Object.keys(scope).length === 0;
+
+  const page = paginationSchema.safeParse(req.query);
+  if (!page.success) {
+    return res.status(400).json({
+      success: false,
+      error: { code: "VALIDATION_ERROR", message: page.error.message },
+    });
+  }
 
   const where = {
     OR: [
@@ -42,6 +51,7 @@ notesRouter.get("/", async (req: AuthedRequest, res) => {
       organization: true,
     },
     orderBy: { createdAt: "desc" },
+    ...pageOf(page.data),
   });
 
   res.json({ success: true, data: notes });
@@ -57,6 +67,19 @@ notesRouter.post("/", async (req: AuthedRequest, res) => {
       success: false,
       error: { code: "VALIDATION_ERROR", message: parsed.error.message },
     });
+  }
+
+  // A note attached to an opportunity must be a note on a deal the author is
+  // allowed to see; otherwise a Manager can write into another owner's deal
+  // trail. Standalone and organization-only notes stay unrestricted (BR-011).
+  if (parsed.data.opportunityId) {
+    const scoped = await scopedOpportunity(req.user, parsed.data.opportunityId);
+    if (!scoped) {
+      return res.status(404).json({
+        success: false,
+        error: { code: "NOT_FOUND", message: "Opportunity not found or not in your scope." },
+      });
+    }
   }
 
   const note = await prisma.note.create({

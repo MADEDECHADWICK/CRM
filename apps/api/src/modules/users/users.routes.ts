@@ -181,22 +181,38 @@ usersRouter.patch("/:id", async (req: AuthedRequest, res) => {
     }
   }
 
-  const user = await prisma.user
-    .update({
-      where: { id: params.data.id },
-      data: {
-        ...(body.data.name !== undefined ? { name: body.data.name } : {}),
-        ...(body.data.role !== undefined ? { role: body.data.role } : {}),
-        ...(body.data.departmentId !== undefined
-          ? { departmentId: body.data.departmentId }
-          : {}),
-      },
-      select: SELECT_FIELDS,
-    })
-    .catch((error: { code?: string }) => {
-      if (error?.code === "P2025") return null;
-      throw error;
-    });
+  const user = await prisma.$transaction(async (tx) => {
+    const updated = await tx.user
+      .update({
+        where: { id: params.data.id },
+        data: {
+          ...(body.data.name !== undefined ? { name: body.data.name } : {}),
+          ...(body.data.role !== undefined ? { role: body.data.role } : {}),
+          ...(body.data.departmentId !== undefined
+            ? { departmentId: body.data.departmentId }
+            : {}),
+        },
+        select: SELECT_FIELDS,
+      })
+      .catch((error: { code?: string }) => {
+        if (error?.code === "P2025") return null;
+        throw error;
+      });
+
+    // Making someone who is a member of one department the head of another left
+    // them heading a department they no longer belong to. Clear the stale
+    // appointment so "a head is a member" holds after every edit, not just at
+    // appointment time. (A null departmentId matches every department, so
+    // unassigning also frees any headship.)
+    if (updated && body.data.departmentId !== undefined) {
+      await tx.department.updateMany({
+        where: { headId: params.data.id, id: { not: body.data.departmentId ?? "" } },
+        data: { headId: null },
+      });
+    }
+
+    return updated;
+  });
 
   if (!user) {
     return res.status(404).json({

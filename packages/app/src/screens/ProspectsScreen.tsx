@@ -30,6 +30,7 @@ import {
 
 import { useAuth } from "../auth/AuthContext";
 import { ContactFormSheet } from "../components/ContactFormSheet";
+import { OrgFormSheet } from "../components/OrgFormSheet";
 import { apiFetch } from "../api";
 
 function initials(name: string): string {
@@ -69,6 +70,8 @@ export function ProspectsScreen({
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Contact | null>(null);
   const [formOrg, setFormOrg] = useState<Organization | null>(null);
+  const [clientFormOpen, setClientFormOpen] = useState(false);
+  const [clientFormOrg, setClientFormOrg] = useState<Organization | null>(null);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -466,6 +469,16 @@ export function ProspectsScreen({
                       variant="secondary"
                       size="sm"
                     />
+
+                    <Button
+                      title="Edit client details"
+                      onPress={() => {
+                        setClientFormOrg(organization);
+                        setClientFormOpen(true);
+                      }}
+                      variant="ghost"
+                      size="sm"
+                    />
                   </View>
                 ) : null}
               </Card>
@@ -481,6 +494,16 @@ export function ProspectsScreen({
           contact={editing}
           organization={formOrg}
           onClose={() => setFormOpen(false)}
+          onSaved={load}
+        />
+      ) : null}
+
+      {clientFormOrg ? (
+        <OrgFormSheet
+          visible={clientFormOpen}
+          token={token ?? ""}
+          organization={clientFormOrg}
+          onClose={() => setClientFormOpen(false)}
           onSaved={load}
         />
       ) : null}

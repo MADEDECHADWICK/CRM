@@ -1,14 +1,15 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
-import { requireAuth, AuthedRequest } from "../../middleware/authorize";
+import { requireAuth, AuthedRequest, scopedOpportunity } from "../../middleware/authorize";
 import { createFollowup, deleteFollowup, completeFollowup } from "./followupActions";
+import { paginationSchema, pageOf } from "../../lib/pagination";
 
 export const followupsRouter = Router();
 followupsRouter.use(requireAuth);
 
 const createSchema = z.object({
-  note: z.string().min(1),
+  note: z.string().trim().min(1),
   type: z.enum(["CALL", "EMAIL", "MEETING"]).optional(),
   dueAt: z.string().datetime(),
   opportunityId: z.string().uuid().optional(),
@@ -24,6 +25,14 @@ const idParamSchema = z.object({ id: z.string().uuid() });
 // private to-do list.
 followupsRouter.get("/", async (req: AuthedRequest, res) => {
   try {
+    const page = paginationSchema.safeParse(req.query);
+    if (!page.success) {
+      return res.status(400).json({
+        success: false,
+        error: { code: "VALIDATION_ERROR", message: page.error.message },
+      });
+    }
+
     const followups = await prisma.followup.findMany({
       where: {
         OR: [{ assignedToId: req.user!.id }, { createdById: req.user!.id }],
@@ -33,6 +42,7 @@ followupsRouter.get("/", async (req: AuthedRequest, res) => {
         organization: true,
       },
       orderBy: { dueAt: "asc" },
+      ...pageOf(page.data),
     });
 
     res.json({ success: true, data: followups });
@@ -49,6 +59,19 @@ followupsRouter.post("/", async (req: AuthedRequest, res) => {
       success: false,
       error: { code: "VALIDATION_ERROR", message: parsed.error.message },
     });
+  }
+
+  // A reminder may only be linked to an opportunity the creator can see;
+  // otherwise a Manager can attach a task to a deal outside her scope.
+  // Context-free and organization-linked reminders stay unrestricted (BR-011).
+  if (parsed.data.opportunityId) {
+    const scoped = await scopedOpportunity(req.user, parsed.data.opportunityId);
+    if (!scoped) {
+      return res.status(404).json({
+        success: false,
+        error: { code: "NOT_FOUND", message: "Opportunity not found or not in your scope." },
+      });
+    }
   }
 
   try {

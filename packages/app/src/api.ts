@@ -25,4 +25,17 @@ export function getApiUrl() {
   return baseUrl;
 }
 
-export const apiFetch = createApiClient(() => baseUrl);
+/**
+ * The session-expiry handler, registered by AuthProvider. A 401 from any
+ * request means the token is dead, so the app clears the session and falls
+ * back to the login screen rather than showing an endless stream of errors.
+ */
+let onUnauthorized: (() => void) | undefined;
+
+export function setUnauthorizedHandler(handler?: () => void) {
+  onUnauthorized = handler;
+}
+
+export const apiFetch = createApiClient(() => baseUrl, {
+  onUnauthorized: () => onUnauthorized?.(),
+});

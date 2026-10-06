@@ -3,6 +3,27 @@ import type { StoredSession } from "./sessionStorage.types";
 const KEY = "crm.session";
 
 /**
+ * Reads the `exp` claim out of a JWT without verifying it.
+ *
+ * The server is still the only thing that verifies the signature; this only
+ * decides whether a persisted session is worth restoring. An expired token in
+ * localStorage previously started the app as "logged in" and then failed every
+ * request, so it is treated as no session at all.
+ */
+function isExpired(token: string): boolean {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return true;
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    const claims = JSON.parse(json) as { exp?: number };
+    return typeof claims.exp === "number" && claims.exp * 1000 <= Date.now();
+  } catch {
+    // Undecodable token: do not trust it.
+    return true;
+  }
+}
+
+/**
  * Persists the session to localStorage.
  *
  * A browser has no equivalent of "the app process was never restarted" — a
@@ -27,6 +48,8 @@ function read(): StoredSession | null {
     const parsed = JSON.parse(raw) as Partial<StoredSession>;
 
     if (typeof parsed?.token !== "string" || !parsed.user) return null;
+
+    if (isExpired(parsed.token)) return null;
 
     return { token: parsed.token, user: parsed.user } as StoredSession;
   } catch {

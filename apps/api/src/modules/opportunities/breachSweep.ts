@@ -130,8 +130,20 @@ export async function sweepOverdueProposals(now: Date = new Date()): Promise<Swe
           return false;
         }
 
-        await tx.opportunity.update({
-          where: { id: row.id },
+        // The conditional claim makes the sweep idempotent under concurrency:
+        // only the runner that finds proposalBreachedAt still null wins. Two
+        // concurrent sweeps previously each passed the findUnique above and
+        // both wrote — duplicate history and duplicate reminders. PostgreSQL
+        // re-checks the predicate after resolving the row lock, so the loser
+        // matches zero rows.
+        const claimed = await tx.opportunity.updateMany({
+          where: {
+            id: row.id,
+            stage: { in: [...BREACHABLE_STAGES] },
+            proposalSubmittedAt: null,
+            proposalBreachedAt: null,
+            proposalDueAt: { lt: now },
+          },
           data: {
             stage: "NOT_SUBMITTED",
             stageEnteredAt: now,
@@ -141,6 +153,7 @@ export async function sweepOverdueProposals(now: Date = new Date()): Promise<Swe
             breachNoteClearedAt: null,
           },
         });
+        if (claimed.count === 0) return false;
 
         // The system is the actor here, not a person — ActorType.SYSTEM plus
         // a systemReason is what keeps this transition as auditable as a

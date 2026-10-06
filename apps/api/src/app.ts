@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import type { NextFunction, Request, Response } from "express";
 import { followupsRouter } from "./modules/followups/followups.routes";
 import { authRouter } from "./modules/auth/auth.routes";
 import { organizationsRouter } from "./modules/organizations/organizations.routes";
@@ -35,6 +36,50 @@ app.use("/notes", notesRouter);
 app.use("/users", usersRouter);
 app.use("/departments", departmentsRouter);
 app.use("/contacts", contactsRouter);
+
+/**
+ * Terminal error handler.
+ *
+ * Without this, anything a route did not catch itself fell through to
+ * Express's default handler, which replies with an HTML error page and a
+ * stack trace — so a bad foreign-key id produced `500 text/html` instead of a
+ * structured rejection, and the client's JSON parser had nothing to work
+ * with. Known Prisma errors become the envelope the rest of the API uses;
+ * everything else is logged and returned as an opaque 500 so internals never
+ * leak to the caller.
+ */
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (err && typeof err === "object" && (err as { name?: string }).name === "PrismaClientKnownRequestError") {
+    const code = (err as { code?: string }).code;
+    if (code === "P2003") {
+      return res.status(400).json({
+        success: false,
+        error: { code: "INVALID_REFERENCE", message: "A referenced record does not exist." },
+      });
+    }
+    if (code === "P2025") {
+      return res.status(404).json({
+        success: false,
+        error: { code: "NOT_FOUND", message: "The requested record was not found." },
+      });
+    }
+    // Serializable transactions (transitions, primary-contact promotion) abort
+    // a concurrent loser with this code. It is a retryable conflict, not a
+    // server fault, so it gets a 409 rather than a 500.
+    if (code === "P2034") {
+      return res.status(409).json({
+        success: false,
+        error: { code: "CONFLICT", message: "The record changed during your request. Reload and try again." },
+      });
+    }
+  }
+
+  console.error("Unhandled API error:", err);
+  res.status(500).json({
+    success: false,
+    error: { code: "INTERNAL_ERROR", message: "Something went wrong." },
+  });
+});
 
 const port = Number(process.env.API_PORT || 4000);
 

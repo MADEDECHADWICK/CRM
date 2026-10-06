@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -12,7 +13,7 @@ import {
   type LoginResponse,
 } from "@crm/core";
 
-import { apiFetch } from "../api";
+import { apiFetch, setUnauthorizedHandler } from "../api";
 import {
   clearSession,
   loadSession,
@@ -63,6 +64,15 @@ export function AuthProvider({
     clearSession();
     setSession(null);
   }
+
+  // Any request that comes back 401 (expired or revoked token) logs the user
+  // out, so a dead session surfaces as the login screen rather than errors on
+  // every screen. Registered once; re-registered if logout changes identity.
+  useEffect(() => {
+    setUnauthorizedHandler(logout);
+    return () => setUnauthorizedHandler(undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const value = useMemo(
     () => ({

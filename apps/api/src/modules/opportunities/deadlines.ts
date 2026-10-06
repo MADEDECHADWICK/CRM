@@ -57,21 +57,42 @@ export async function setProposalDeadline(input: {
     throw new DeadlineRejected("A drafting deadline cannot be in the past.");
   }
 
-  return prisma.opportunity.update({
-    where: { id: opportunityId },
-    data: {
-      proposalDueAt: dueAt,
-      proposalDueSetById: setById,
-      proposalDueSetAt: new Date(),
-      // Re-arming the clock on a breached deal: if the assignee is picking
-      // the work back up, a fresh deadline is legitimate, and the old breach
-      // record is cleared so the deal is not simultaneously "recovered" and
-      // "flagged as failed". The stage change itself is still a manual,
-      // reasoned decision by the owner.
-      ...(opp.proposalBreachedAt
-        ? { stage: "PROPOSAL" as const, proposalBreachedAt: null, breachNoteRequired: false, breachNoteDueAt: null, breachNoteClearedAt: null }
-        : {}),
-    },
+  const rearming = Boolean(opp.proposalBreachedAt);
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.opportunity.update({
+      where: { id: opportunityId },
+      data: {
+        proposalDueAt: dueAt,
+        proposalDueSetById: setById,
+        proposalDueSetAt: new Date(),
+        // Re-arming the clock on a breached deal: if the assignee is picking
+        // the work back up, a fresh deadline is legitimate, and the old breach
+        // record is cleared so the deal is not simultaneously "recovered" and
+        // "flagged as failed". The stage change itself is still a manual,
+        // reasoned decision by the owner.
+        ...(rearming
+          ? { stage: "PROPOSAL" as const, proposalBreachedAt: null, breachNoteRequired: false, breachNoteDueAt: null, breachNoteClearedAt: null }
+          : {}),
+      },
+    });
+
+    // Re-arming discharges the missed-deadline debt, so close the reminder the
+    // sweep raised rather than leaving it stranded on the assignee's list
+    // forever (it was only ever closable by a breach-note that re-arming has
+    // just made unnecessary).
+    if (rearming) {
+      await tx.followup.updateMany({
+        where: {
+          opportunityId,
+          status: "PENDING",
+          note: { contains: "was not submitted by its BD deadline" },
+        },
+        data: { status: "COMPLETED", completedAt: new Date() },
+      });
+    }
+
+    return updated;
   });
 }
 
@@ -126,9 +147,12 @@ export async function recordBreachExplanation(input: {
   });
 
   // Idempotent-ish: re-submitting an explanation updates it rather than
-  // stacking duplicates, but a deal that was never breached cannot acquire
-  // an explanation, which would be a fabricated record.
-  if (!opp.proposalBreachedAt) {
+  // stacking duplicates, but a deal that neither carries the breach marker nor
+  // still owes the note cannot acquire an explanation, which would be a
+  // fabricated record. The `breachNoteRequired` clause is what keeps the debt
+  // closable after a recovery has already nulled proposalBreachedAt — otherwise
+  // the assignee is told they owe an explanation the system then refuses.
+  if (!opp.proposalBreachedAt && !opp.breachNoteRequired) {
     throw new DeadlineRejected("This opportunity was never flagged as not submitted.");
   }
 

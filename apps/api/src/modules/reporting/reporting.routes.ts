@@ -147,11 +147,15 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
         totalProposals: proposals._count,
         totalAwaitingFeedback: awaitingFeedback._count,
         totalClients: clients._count,
-        wonValue: won._sum?.amount ?? 0,
+        // Amounts are Decimal in the schema and Prisma serialises them as JSON
+        // strings; breakdown and sources already convert with Number(), so
+        // summary must too or the same figure is a string here and a number
+        // there. Matches the `number` type on ReportingSummary.
+        wonValue: Number(won._sum?.amount ?? 0),
         wonCount: won._count,
-        lostValue: lost._sum?.amount ?? 0,
+        lostValue: Number(lost._sum?.amount ?? 0),
         lostCount: lost._count,
-        activeProposalValue: activeProposals._sum?.amount ?? 0,
+        activeProposalValue: Number(activeProposals._sum?.amount ?? 0),
         activeProposalCount: activeProposals._count,
       },
     });

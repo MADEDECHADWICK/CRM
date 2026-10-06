@@ -171,5 +171,13 @@ export async function transitionOpportunity(input: TransitionInput) {
     }
 
     return updated;
+  }, {
+    // Serializable, not the default READ COMMITTED. The state-machine check
+    // reads the current stage and the write commits a new one, so two
+    // concurrent transitions of the same deal both saw the old stage and both
+    // committed — two transitions, two history rows. At Serializable the
+    // second one fails with a serialization error (P2034) and is retried by
+    // the caller, so "one decision, one transition" holds under concurrency.
+    isolationLevel: "Serializable",
   });
 }

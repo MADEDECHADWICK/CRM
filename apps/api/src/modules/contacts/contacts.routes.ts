@@ -2,6 +2,7 @@ import { Router, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth, AuthedRequest } from "../../middleware/authorize";
+import { paginationSchema, pageOf } from "../../lib/pagination";
 
 export const contactsRouter = Router();
 contactsRouter.use(requireAuth);
@@ -28,6 +29,31 @@ const createSchema = z.object({
   phone: phoneField,
   isPrimary: z.boolean().optional(),
   notes: z.string().trim().optional(),
+});
+
+// PATCH semantics differ from create: an empty string or null means "clear
+// this field". The create-time emailField/phoneField fold "" to undefined,
+// which the old PATCH loop then skipped — so a field could never actually be
+// cleared. These schemas map "" and null to a real null instead.
+const clearableText = z
+  .union([z.string().trim(), z.literal(""), z.null()])
+  .transform((v) => (v === "" || v === null ? null : v))
+  .optional();
+
+const updateSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").optional(),
+  title: clearableText,
+  department: clearableText,
+  email: z
+    .union([z.string().trim().email("Enter a valid email address"), z.literal(""), z.null()])
+    .transform((v) => (v === "" || v === null ? null : v))
+    .optional(),
+  phone: z
+    .union([z.string().trim().min(7, "Enter a valid phone number"), z.literal(""), z.null()])
+    .transform((v) => (v === "" || v === null ? null : v))
+    .optional(),
+  isPrimary: z.boolean().optional(),
+  notes: clearableText,
 });
 
 // A contact always belongs to an organization, so every read/write is
@@ -62,6 +88,13 @@ contactsRouter.get("/", async (req: AuthedRequest, res) => {
 
   const q = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
 
+  const page = paginationSchema.safeParse(req.query);
+  if (!page.success) {
+    return res
+      .status(400)
+      .json({ success: false, error: { code: "VALIDATION_ERROR", message: page.error.message } });
+  }
+
   const contacts = await prisma.contact.findMany({
     where: {
       ...(organizationId ? { organizationId } : {}),
@@ -81,6 +114,7 @@ contactsRouter.get("/", async (req: AuthedRequest, res) => {
     // Primary contact first, then alphabetical — the person you call by
     // default should be at the top of the list.
     orderBy: [{ isPrimary: "desc" }, { name: "asc" }],
+    ...pageOf(page.data),
   });
 
   res.json({ success: true, data: contacts });
@@ -141,7 +175,8 @@ contactsRouter.post("/", async (req: AuthedRequest, res) => {
   }
 
   // Only one primary per organization — promoting a contact demotes the
-  // previous one in the same transaction.
+  // previous one in the same transaction. Serializable so two concurrent
+  // promotions cannot both survive and leave the org with two primaries.
   const contact = await prisma.$transaction(async (tx) => {
     if (fields.isPrimary) {
       await tx.contact.updateMany({
@@ -157,7 +192,7 @@ contactsRouter.post("/", async (req: AuthedRequest, res) => {
       },
       include: withOrganization,
     });
-  });
+  }, { isolationLevel: "Serializable" });
 
   res.status(201).json({ success: true, data: contact });
 });
@@ -173,7 +208,7 @@ contactsRouter.patch("/:id", async (req: AuthedRequest, res) => {
       .json({ success: false, error: { code: "NOT_FOUND", message: "Contact not found" } });
   }
 
-  const body = createSchema.partial().safeParse(req.body);
+  const body = updateSchema.safeParse(req.body);
   if (!body.success) {
     return res
       .status(400)
@@ -183,14 +218,9 @@ contactsRouter.patch("/:id", async (req: AuthedRequest, res) => {
       });
   }
 
-  // An empty string means "clear this field" in the UI, but Prisma treats
-  // undefined as "leave unchanged" — so translate blank strings to null
-  // instead of letting them silently no-op.
-  const data: Record<string, unknown> = { ...body.data };
-  for (const key of ["title", "department", "email", "phone", "notes"] as const) {
-    if (data[key] === undefined) continue;
-    data[key] = data[key] === "" ? null : data[key];
-  }
+  // updateSchema has already turned "" / null into null and left omitted
+  // fields undefined (Prisma's "leave unchanged").
+  const data = body.data;
 
   const contact = await prisma.$transaction(async (tx) => {
     if (data.isPrimary) {
@@ -209,7 +239,7 @@ contactsRouter.patch("/:id", async (req: AuthedRequest, res) => {
       data,
       include: withOrganization,
     });
-  });
+  }, { isolationLevel: "Serializable" });
 
   res.json({ success: true, data: contact });
 });
