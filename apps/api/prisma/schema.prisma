@@ -680,6 +680,10 @@ model Opportunity {
   /// The breach-escalation queue and the open-note report counts filter on
   /// exactly this pair.
   @@index([breachNoteRequired, breachNoteDueAt])
+  /// A Manager's reports and pipeline are scoped by owner + the period window,
+  /// so this lets the aggregate range-scan instead of scanning every deal they
+  /// own and filtering.
+  @@index([ownerId, stageEnteredAt])
 }
 
 /// Records every stage transition made to an Opportunity.
@@ -934,6 +938,8 @@ model Followup {
   @@index([dueAt])
   /// Supports user-specific task views.
   @@index([assignedToId])
+  /// The personal-scope list matches on createdById as well as assignedToId.
+  @@index([createdById])
   /// Supports loading follow-ups within an opportunity.
   @@index([opportunityId, dueAt])
   /// Supports loading follow-ups within an organization.
