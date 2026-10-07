@@ -6,16 +6,37 @@ export interface AuthedRequest extends Request {
   user?: { id: string; role: "MARKETING_BD" | "PARTNER" | "MANAGER" };
 }
 
-export function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
+export async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   if (!header) return res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED" } });
+
+  let payload: { id?: string };
   try {
-    const payload = jwt.verify(header.replace("Bearer ", ""), process.env.JWT_SECRET!) as any;
-    req.user = payload;
-    next();
+    payload = jwt.verify(header.replace("Bearer ", ""), process.env.JWT_SECRET!) as { id?: string };
   } catch {
     return res.status(401).json({ success: false, error: { code: "INVALID_TOKEN" } });
   }
+
+  if (!payload?.id) {
+    return res.status(401).json({ success: false, error: { code: "INVALID_TOKEN" } });
+  }
+
+  // Resolve the CURRENT role from the database instead of trusting the role
+  // baked into the token. A token is valid for a week, so reading the role
+  // from it meant a demotion (Partner -> Manager) had no effect until the
+  // token expired, and a deleted account kept working. One indexed primary-key
+  // lookup per request is the price of authority that is never stale.
+  const user = await prisma.user.findUnique({
+    where: { id: payload.id },
+    select: { id: true, role: true },
+  });
+
+  if (!user) {
+    return res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED" } });
+  }
+
+  req.user = { id: user.id, role: user.role };
+  next();
 }
 
 // The single place the Marketing&BD/Partner-see-all vs Manager-sees-own

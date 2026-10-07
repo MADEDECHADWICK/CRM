@@ -74,6 +74,19 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     }
   }
 
+  // Errors raised by express.json() itself (malformed JSON, or a bare `null`
+  // body that strict mode rejects) carry their own 4xx status. Honour it as a
+  // structured request error instead of letting a bad body look like a server
+  // fault.
+  const status = (err as { status?: number; statusCode?: number })?.status
+    ?? (err as { statusCode?: number })?.statusCode;
+  if (typeof status === "number" && status >= 400 && status < 500) {
+    return res.status(status).json({
+      success: false,
+      error: { code: "BAD_REQUEST", message: "Malformed request." },
+    });
+  }
+
   console.error("Unhandled API error:", err);
   res.status(500).json({
     success: false,

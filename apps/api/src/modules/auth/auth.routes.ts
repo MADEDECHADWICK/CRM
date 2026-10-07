@@ -8,10 +8,16 @@ export const authRouter = Router();
 
 authRouter.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    // `req.body ?? {}` so a `null`/missing body cannot crash the destructure,
+    // and a type check so a non-string email/password is a clean 400 rather
+    // than a 500 from `email.toLowerCase()` or bcrypt throwing.
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const rawEmail = body.email;
+    const rawPassword = body.password;
 
-    // Validate request
-    if (!email || !password) {
+    // Missing / empty credentials — the same reply for both, so nothing about
+    // whether the account exists can be inferred.
+    if (!rawEmail || !rawPassword) {
       return res.status(400).json({
         success: false,
         error: {
@@ -20,6 +26,19 @@ authRouter.post("/login", async (req, res) => {
         },
       });
     }
+
+    if (typeof rawEmail !== "string" || typeof rawPassword !== "string") {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Email and password must be strings",
+        },
+      });
+    }
+
+    const email = rawEmail;
+    const password = rawPassword;
 
     // Find user by email
     const user = await prisma.user.findUnique({

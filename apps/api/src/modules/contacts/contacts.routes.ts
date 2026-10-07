@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth, AuthedRequest } from "../../middleware/authorize";
 import { paginationSchema, pageOf } from "../../lib/pagination";
+import { canManageStaff } from "@crm/core";
 
 export const contactsRouter = Router();
 contactsRouter.use(requireAuth);
@@ -245,6 +246,17 @@ contactsRouter.patch("/:id", async (req: AuthedRequest, res) => {
 });
 
 contactsRouter.delete("/:id", async (req: AuthedRequest, res) => {
+  // Deleting a client's people is destructive and affects every deal on that
+  // organization, so it is kept to the role that administers prospect data.
+  // Reading and editing stay firm-wide (prospects are firm-wide), but removal
+  // is restricted.
+  if (!canManageStaff(req.user!.role)) {
+    return res.status(403).json({
+      success: false,
+      error: { code: "FORBIDDEN", message: "Only Marketing & BD can delete a contact." },
+    });
+  }
+
   const id = parseId(req, res);
   if (!id) return;
 

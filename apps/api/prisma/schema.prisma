@@ -669,6 +669,17 @@ model Opportunity {
   @@index([proposalDueAt])
   /// Channel attribution reporting (BR-018).
   @@index([leadSource])
+  /// Reporting period filters and the pipeline list's `orderBy stageEnteredAt`
+  /// both key on this; without it the aggregates and the default sort scan the
+  /// whole table.
+  @@index([stageEnteredAt])
+  /// The period filters always combine a stage with the entered-at window.
+  @@index([stage, stageEnteredAt])
+  /// Channel-attribution reporting windows deals by when the lead arrived.
+  @@index([leadReceivedAt])
+  /// The breach-escalation queue and the open-note report counts filter on
+  /// exactly this pair.
+  @@index([breachNoteRequired, breachNoteDueAt])
 }
 
 /// Records every stage transition made to an Opportunity.
