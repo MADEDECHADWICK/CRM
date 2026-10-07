@@ -3,6 +3,12 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
 import { prisma } from "../../lib/prisma";
+import {
+  loginKey,
+  loginBlockedFor,
+  recordLoginFailure,
+  clearLoginFailures,
+} from "../../middleware/rateLimit";
 
 export const authRouter = Router();
 
@@ -40,6 +46,21 @@ authRouter.post("/login", async (req, res) => {
     const email = rawEmail;
     const password = rawPassword;
 
+    // Throttle repeated failures against the same account from the same client
+    // before doing any password work.
+    const key = loginKey(req);
+    const retryAfter = loginBlockedFor(key);
+    if (retryAfter) {
+      res.setHeader("Retry-After", String(retryAfter));
+      return res.status(429).json({
+        success: false,
+        error: {
+          code: "RATE_LIMITED",
+          message: "Too many failed login attempts. Please wait and try again.",
+        },
+      });
+    }
+
     // Find user by email
     const user = await prisma.user.findUnique({
       where: {
@@ -49,6 +70,7 @@ authRouter.post("/login", async (req, res) => {
 
     // Don't reveal whether the email exists
     if (!user) {
+      recordLoginFailure(key);
       return res.status(401).json({
         success: false,
         error: {
@@ -60,6 +82,7 @@ authRouter.post("/login", async (req, res) => {
 
     // Make sure this user has a password configured
     if (!user.passwordHash) {
+      recordLoginFailure(key);
       return res.status(401).json({
         success: false,
         error: {
@@ -76,6 +99,7 @@ authRouter.post("/login", async (req, res) => {
     );
 
     if (!passwordValid) {
+      recordLoginFailure(key);
       return res.status(401).json({
         success: false,
         error: {
@@ -84,6 +108,8 @@ authRouter.post("/login", async (req, res) => {
         },
       });
     }
+
+    clearLoginFailures(key);
 
     // Make sure JWT secret exists
     const jwtSecret = process.env.JWT_SECRET;

@@ -776,10 +776,10 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
       return;
     }
 
-    if (password.trim() && password.trim().length < 6) {
+    if (password.trim().length < 8) {
       Alert.alert(
-        "Weak password",
-        "Initial password must be at least 6 characters."
+        "Password required",
+        "Set an initial password of at least 8 characters."
       );
       return;
     }
@@ -792,7 +792,7 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
           name: name.trim(),
           email: email.trim(),
           role,
-          ...(password.trim() ? { password: password.trim() } : {}),
+          password: password.trim(),
           ...(departmentId ? { departmentId } : {}),
         }),
       });
@@ -827,17 +827,16 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
       />
 
       <TextField
-        label="Initial password (optional)"
+        label="Initial password"
         value={password}
         onChangeText={setPassword}
-        placeholder="Set one so they can log in today"
+        placeholder="At least 8 characters"
         autoCapitalize="none"
         autoCorrect={false}
         secureTextEntry
       />
       <Text style={styles.formHint}>
-        Leave blank to use the default{" "}
-        <Text style={styles.formHintStrong}>password123</Text> — tell the new
+        Set an initial password of at least 8 characters, then tell the new
         member which one you chose.
       </Text>
 

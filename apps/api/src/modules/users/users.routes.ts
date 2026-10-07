@@ -27,7 +27,10 @@ const createSchema = z.object({
   name: z.string().min(1).trim(),
   email: z.string().email(),
   role: z.enum(["PARTNER", "MANAGER"]),
-  password: z.string().min(6).optional(),
+  // Required, with a length floor. A shared hardcoded default password made
+  // every new account login-able with a publicly known secret; the admin
+  // setting the first password is the only safe default.
+  password: z.string().min(8, "Password must be at least 8 characters"),
   departmentId: z.string().uuid().optional(),
 });
 
@@ -89,8 +92,8 @@ usersRouter.get("/", async (req: AuthedRequest, res) => {
   res.json({ success: true, data: users.map(toUserPayload) });
 });
 
-// Add a staff member (Partner or Manager). BD only. New hires get the demo
-// password unless the admin sends one; the email is the login identity.
+// Add a staff member (Partner or Manager). BD only. The admin sets the initial
+// password; the email is the login identity.
 usersRouter.post("/", async (req: AuthedRequest, res) => {
   if (!isBD(req.user)) {
     return res.status(403).json({
@@ -137,7 +140,7 @@ usersRouter.post("/", async (req: AuthedRequest, res) => {
       name: parsed.data.name,
       email,
       role: parsed.data.role,
-      passwordHash: bcrypt.hashSync(parsed.data.password ?? "password123", 10),
+      passwordHash: bcrypt.hashSync(parsed.data.password, 10),
       departmentId: parsed.data.departmentId,
     },
     select: SELECT_FIELDS,
