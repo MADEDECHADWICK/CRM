@@ -160,10 +160,8 @@ export const PAID_SOURCE_ROWS = LEAD_SOURCES.filter(
   (s) => !isInboundSource(s)
 );
 
-const _PAID_MARKER = PAID_SOURCE_ROWS;
-
 export function isPaidSource(source: LeadSource): boolean {
-  return _PAID_MARKER.includes(source);
+  return PAID_SOURCE_ROWS.includes(source);
 }
 
 export function sourceLabel(source: LeadSource): string {

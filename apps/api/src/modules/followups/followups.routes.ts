@@ -48,7 +48,10 @@ followupsRouter.get("/", async (req: AuthedRequest, res) => {
     res.json({ success: true, data: followups });
   } catch (error) {
     console.error("Failed to load followups:", error);
-    res.status(500).json({ success: false, message: "Failed to load followups" });
+    res.status(500).json({
+      success: false,
+      error: { code: "FOLLOWUP_LOAD_FAILED", message: "Failed to load followups" },
+    });
   }
 });
 

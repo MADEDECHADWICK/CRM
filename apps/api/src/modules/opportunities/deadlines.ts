@@ -4,7 +4,7 @@
 // (BR-016, BR-019).
 
 import { prisma } from "../../lib/prisma";
-import { DEADLINE_APPLICABLE_STAGES, STAGES } from "@crm/core";
+import { DEADLINE_APPLICABLE_STAGES } from "@crm/core";
 
 export class DeadlineRejected extends Error {
   constructor(message: string) {
@@ -192,9 +192,4 @@ export async function recordBreachExplanation(input: {
 
     return { opportunity: updated, note };
   });
-}
-
-/** Validates a raw stage string against the canonical list. */
-export function isKnownStage(value: string): value is (typeof STAGES)[number] {
-  return (STAGES as readonly string[]).includes(value);
 }

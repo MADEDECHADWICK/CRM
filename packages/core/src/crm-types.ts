@@ -93,10 +93,6 @@ export type Contact = {
   updatedAt?: string;
 };
 
-export type OrganizationWithContacts = Organization & {
-  contacts?: Contact[];
-};
-
 export type Opportunity = {
   id: string;
   title: string;

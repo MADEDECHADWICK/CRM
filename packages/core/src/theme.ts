@@ -166,9 +166,3 @@ export const FOLLOWUP_TYPE_LABELS: Record<FollowupType, string> = {
   EMAIL: "Email",
   MEETING: "Meeting",
 };
-
-// Amount strings arrive as JSON strings (Prisma Decimal) — route all money
-// through formatAmount from ./format so the contract lives in one place.
-export function fmtKES(amount: number | string): string {
-  return `KES ${Number(amount).toLocaleString()}`;
-}
