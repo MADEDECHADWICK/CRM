@@ -26,7 +26,7 @@ import {
   reassignOpportunity,
   OwnershipRejected,
 } from "./ownership";
-import { paginationSchema, pageOf } from "../../lib/pagination";
+import { paginationSchema, pageOf, MAX_LIMIT } from "../../lib/pagination";
 
 export const opportunitiesRouter = Router();
 opportunitiesRouter.use(requireAuth);
@@ -152,6 +152,16 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
   // their blindfold; departmentId narrows within whatever scope applies.
   const canFilterOwner = req.user!.role !== "MANAGER";
 
+  // RAG is computed in JS, so a `?rag=` filter cannot be pushed into SQL. If it
+  // were applied after DB pagination the filtered view would be incomplete
+  // (only the first page's worth of rows would ever be classified). So when a
+  // RAG filter is requested we load a bounded candidate set, classify it, then
+  // paginate in memory. The cap is deliberate — a RAG-filtered view is a
+  // working shortlist, not the whole book.
+  const wantsRag = Boolean(rag);
+  const page = pageOf(query.data);
+  const paging = wantsRag ? { take: MAX_LIMIT, skip: 0 } : { take: page.take, skip: page.skip };
+
   const opps = await prisma.opportunity.findMany({
     where: {
       ...opportunityScope(req.user),
@@ -171,7 +181,7 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
       owner: { select: { id: true, name: true } },
     },
     orderBy: { stageEnteredAt: "desc" },
-    ...pageOf(query.data),
+    ...paging,
   });
 
   // Filtered and decorated here rather than in the query. RAG depends on
@@ -179,7 +189,11 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
   // timezone-agnostic columns, so the database returns the candidate set and
   // one shared function decides the colour.
   const decorated = opps.map(withRag);
-  const result = rag ? decorated.filter((o) => o.rag.status === rag) : decorated;
+  const filtered = rag ? decorated.filter((o) => o.rag.status === rag) : decorated;
+
+  // When RAG was filtered, pagination happens over the classified rows above.
+  const result = wantsRag ? filtered.slice(page.skip, page.skip + page.take) : filtered;
+
   res.json({ success: true, data: result });
 });
 
