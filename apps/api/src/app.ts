@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import type { NextFunction, Request, Response } from "express";
+import { securityHeaders } from "./middleware/securityHeaders";
 import { followupsRouter } from "./modules/followups/followups.routes";
 import { authRouter } from "./modules/auth/auth.routes";
 import { organizationsRouter } from "./modules/organizations/organizations.routes";
@@ -17,7 +18,18 @@ import {
 
 const app = express();
 
-app.use(cors());
+app.use(securityHeaders);
+
+// CORS: permissive by default for local development (the browser client may be
+// served from a different port/host), but pinnable via CORS_ORIGINS (comma
+// separated) for a real deployment. Auth is a Bearer token, not a cookie, so
+// the risk from an open origin is limited to requests that already hold a
+// token — but production should set CORS_ORIGINS.
+const allowedOrigins = (process.env.CORS_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+app.use(cors(allowedOrigins.length ? { origin: allowedOrigins } : {}));
 app.use(express.json());
 
 app.get("/", (req, res) => {

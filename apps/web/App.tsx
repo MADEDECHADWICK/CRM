@@ -4,7 +4,7 @@ import {
   initialWindowMetrics,
 } from "react-native-safe-area-context";
 
-import { AppNavigator, AuthProvider, setApiUrl } from "@crm/app";
+import { AppNavigator, AuthProvider, ErrorBoundary, setApiUrl } from "@crm/app";
 
 import { API_URL } from "./src/apiUrl";
 
@@ -18,7 +18,9 @@ export default function App() {
     <View style={styles.root}>
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <AuthProvider>
-          <AppNavigator />
+          <ErrorBoundary>
+            <AppNavigator />
+          </ErrorBoundary>
         </AuthProvider>
       </SafeAreaProvider>
     </View>

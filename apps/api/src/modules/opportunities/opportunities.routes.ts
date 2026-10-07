@@ -164,7 +164,9 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
       ...(departmentId ? { departmentId } : {}),
     },
     include: {
-      organization: true,
+      // Only the fields the pipeline list renders — the full organization row
+      // (address/website/description) was being shipped per deal for nothing.
+      organization: { select: { id: true, name: true } },
       department: { include: { head: { select: { id: true, name: true, role: true } } } },
       owner: { select: { id: true, name: true } },
     },

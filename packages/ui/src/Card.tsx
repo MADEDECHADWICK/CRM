@@ -29,6 +29,7 @@ export function Card({ children, onPress, style, onLayout }: CardProps) {
       <Pressable
         onPress={onPress}
         onLayout={onLayout}
+        accessibilityRole="button"
         style={({ pressed }) => [
           styles.card,
           pressed && styles.pressed,

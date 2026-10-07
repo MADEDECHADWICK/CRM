@@ -5,7 +5,7 @@ import {
   initialWindowMetrics,
 } from "react-native-safe-area-context";
 
-import { AppNavigator, AuthProvider, setApiUrl } from "@crm/app";
+import { AppNavigator, AuthProvider, ErrorBoundary, setApiUrl } from "@crm/app";
 
 import { API_URL } from "./src/lib/api";
 
@@ -18,7 +18,9 @@ export default function App() {
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <AuthProvider>
-          <AppNavigator />
+          <ErrorBoundary>
+            <AppNavigator />
+          </ErrorBoundary>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

@@ -118,6 +118,9 @@ export function AppNavigator() {
             <Pressable
               key={item.key}
               onPress={() => setScreen(item.key)}
+              accessibilityRole="tab"
+              accessibilityLabel={item.label}
+              accessibilityState={{ selected: active }}
               style={({ pressed }) => [
                 styles.navButton,
                 pressed && styles.navPressed,
