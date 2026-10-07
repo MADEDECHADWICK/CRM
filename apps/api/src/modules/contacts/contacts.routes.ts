@@ -30,6 +30,10 @@ const createSchema = z.object({
   phone: phoneField,
   isPrimary: z.boolean().optional(),
   notes: z.string().trim().optional(),
+  // Validated here (uuid) and required. Previously the route read this from
+  // the raw body and the rest of the body was spread into the create, which
+  // let a client set id/createdAt and turned an unknown key into a 500.
+  organizationId: z.string().uuid(),
 });
 
 // PATCH semantics differ from create: an empty string or null means "clear
@@ -157,16 +161,11 @@ contactsRouter.post("/", async (req: AuthedRequest, res) => {
     });
   }
 
-  const { organizationId, ...fields } = req.body as {
-    organizationId: string;
-  } & z.infer<typeof createSchema>;
-
-  if (!organizationId || typeof organizationId !== "string") {
-    return res.status(400).json({
-      success: false,
-      error: { code: "VALIDATION_ERROR", message: "An organization is required" },
-    });
-  }
+  // Built from the PARSED payload only. Using `req.body` here was a mass
+  // assignment hole: zod had already stripped unknown keys and coerced the
+  // known ones, but the create ignored that and spread the raw body — so a
+  // caller could set `id`/`createdAt` directly.
+  const { organizationId, ...fields } = body.data;
 
   const org = await prisma.organization.findUnique({ where: { id: organizationId } });
   if (!org) {
