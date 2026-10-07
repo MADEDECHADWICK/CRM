@@ -125,19 +125,26 @@ export function OpportunitiesScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
 
-    const data = await apiFetch<Opportunity[]>("/opportunities", token);
-    setOpportunities(data);
+    try {
+      const data = await apiFetch<Opportunity[]>("/opportunities", token);
+      setOpportunities(data);
+      setLoadError(null);
+    } catch (err) {
+      // Surfaced rather than swallowed: a failed load must not masquerade as
+      // "no deals yet".
+      console.error("Pipeline loading error:", err);
+      setLoadError(err instanceof Error ? err.message : "Unable to load deals.");
+    }
   }, [token]);
 
   useEffect(() => {
-    load()
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    load().finally(() => setLoading(false));
   }, [load]);
 
   async function refresh() {
@@ -194,6 +201,20 @@ export function OpportunitiesScreen() {
       <Screen>
         <View style={styles.center}>
           <ActivityIndicator color={tokens.color.brand} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <Screen>
+        <View style={styles.center}>
+          <EmptyState
+            icon={IconSet.Warning}
+            title="Unable to load deals"
+            subtitle={loadError}
+          />
         </View>
       </Screen>
     );

@@ -65,6 +65,7 @@ export function ProspectsScreen({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const [formOpen, setFormOpen] = useState(false);
@@ -78,19 +79,23 @@ export function ProspectsScreen({
 
     // Fetched together so expanding a client shows its people instantly
     // instead of waiting on a second round trip.
-    const [orgData, contactData] = await Promise.all([
-      apiFetch<Organization[]>("/organizations", token),
-      apiFetch<Contact[]>("/contacts", token),
-    ]);
+    try {
+      const [orgData, contactData] = await Promise.all([
+        apiFetch<Organization[]>("/organizations", token),
+        apiFetch<Contact[]>("/contacts", token),
+      ]);
 
-    setOrganizations(orgData);
-    setContacts(contactData);
+      setOrganizations(orgData);
+      setContacts(contactData);
+      setLoadError(null);
+    } catch (err) {
+      console.error("Prospects loading error:", err);
+      setLoadError(err instanceof Error ? err.message : "Unable to load clients.");
+    }
   }, [token]);
 
   useEffect(() => {
-    load()
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    load().finally(() => setLoading(false));
   }, [load]);
 
   async function refresh() {
@@ -222,6 +227,20 @@ export function ProspectsScreen({
       <Screen>
         <View style={styles.center}>
           <ActivityIndicator color={tokens.color.brand} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <Screen>
+        <View style={styles.center}>
+          <EmptyState
+            icon={IconSet.Warning}
+            title="Unable to load clients"
+            subtitle={loadError}
+          />
         </View>
       </Screen>
     );

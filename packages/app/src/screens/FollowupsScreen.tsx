@@ -118,6 +118,7 @@ export function FollowupsScreen() {
   const [followups, setFollowups] = useState<Followup[]>([]);
   const [tab, setTab] = useState<TabKey>("pending");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const [showCreate, setShowCreate] = useState(false);
@@ -135,8 +136,14 @@ export function FollowupsScreen() {
   const load = useCallback(async () => {
     if (!token) return;
 
-    const data = await apiFetch<Followup[]>("/followups", token);
-    setFollowups(data);
+    try {
+      const data = await apiFetch<Followup[]>("/followups", token);
+      setFollowups(data);
+      setLoadError(null);
+    } catch (err) {
+      console.error("Followups loading error:", err);
+      setLoadError(err instanceof Error ? err.message : "Unable to load follow-ups.");
+    }
   }, [token]);
 
   const loadOrgs = useCallback(async () => {
@@ -147,9 +154,7 @@ export function FollowupsScreen() {
   }, [token]);
 
   useEffect(() => {
-    load()
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    load().finally(() => setLoading(false));
   }, [load]);
 
   useEffect(() => {
@@ -244,6 +249,20 @@ export function FollowupsScreen() {
       <Screen>
         <View style={styles.center}>
           <ActivityIndicator color={tokens.color.brand} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <Screen>
+        <View style={styles.center}>
+          <EmptyState
+            icon={IconSet.Warning}
+            title="Unable to load follow-ups"
+            subtitle={loadError}
+          />
         </View>
       </Screen>
     );

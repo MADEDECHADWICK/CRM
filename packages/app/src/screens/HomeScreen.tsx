@@ -76,26 +76,33 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactQuery, setContactQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     if (!token) return;
 
-    const [summaryData, opportunityData, contactData] = await Promise.all([
-      apiFetch<ReportingSummary>("/reporting/summary", token),
-      apiFetch<Opportunity[]>("/opportunities", token),
-      apiFetch<Contact[]>("/contacts", token),
-    ]);
+    try {
+      const [summaryData, opportunityData, contactData] = await Promise.all([
+        apiFetch<ReportingSummary>("/reporting/summary", token),
+        apiFetch<Opportunity[]>("/opportunities", token),
+        apiFetch<Contact[]>("/contacts", token),
+      ]);
 
-    setSummary(summaryData);
-    setOpportunities(opportunityData);
-    setContacts(contactData);
+      setSummary(summaryData);
+      setOpportunities(opportunityData);
+      setContacts(contactData);
+      setError(null);
+    } catch (err) {
+      // Surfaced instead of swallowed: a failed load used to leave the
+      // dashboard on an endless spinner because summary stayed null.
+      console.error("Home loading error:", err);
+      setError(err instanceof Error ? err.message : "Unable to load your dashboard.");
+    }
   }, [token]);
 
   useEffect(() => {
-    load()
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    load().finally(() => setLoading(false));
   }, [load]);
 
   async function refresh() {
@@ -139,11 +146,25 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
     : contacts.slice(0, CONTACTS_PREVIEW);
   const hiddenCount = contacts.length - visibleContacts.length;
 
-  if (loading || !summary) {
+  if (loading) {
     return (
       <Screen>
         <View style={styles.center}>
           <ActivityIndicator color={tokens.color.brand} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (error || !summary) {
+    return (
+      <Screen>
+        <View style={styles.center}>
+          <EmptyState
+            icon={IconSet.Warning}
+            title="Unable to load your dashboard"
+            subtitle={error ?? "Please pull to refresh and try again."}
+          />
         </View>
       </Screen>
     );
