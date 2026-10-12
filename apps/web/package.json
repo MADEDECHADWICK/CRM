@@ -23,6 +23,7 @@
     "start": "expo start",
     "dev": "expo start --web",
     "build": "expo export --platform web",
+    "serve": "node serve.mjs",
     "typecheck": "tsc --noEmit"
   },
   "private": true
