@@ -21,10 +21,15 @@ function resolveApiUrl(): string {
   if (configured) return configured;
 
   if (typeof window !== "undefined" && window.location?.hostname) {
-    return `http://${window.location.hostname}:4000`;
+    // Use 127.0.0.1 rather than "localhost": on some machines `localhost`
+    // resolves to ::1 (IPv6) first, and the API listens on IPv4, so the
+    // browser would get "Failed to fetch" against an unreachable address.
+    const host =
+      window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
+    return `http://${host}:4000`;
   }
 
-  return "http://localhost:4000";
+  return "http://127.0.0.1:4000";
 }
 
 export const API_URL = resolveApiUrl();

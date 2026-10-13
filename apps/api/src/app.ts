@@ -146,6 +146,10 @@ const sweepTimer = setInterval(() => {
 // Do not hold the event loop open on this timer alone during shutdown.
 sweepTimer.unref();
 
+// Bind IPv4 on all interfaces so both `127.0.0.1` and the machine's LAN IP
+// reach the API. The web client targets 127.0.0.1 explicitly rather than
+// `localhost`, because `localhost` resolves to ::1 first on this machine and
+// an IPv4 listener would refuse it.
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on port ${port}`);
 });
