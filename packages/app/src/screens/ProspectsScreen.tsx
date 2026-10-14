@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   RefreshControl,
   type LayoutChangeEvent,
@@ -32,6 +31,7 @@ import { useAuth } from "../auth/AuthContext";
 import { ContactFormSheet } from "../components/ContactFormSheet";
 import { OrgFormSheet } from "../components/OrgFormSheet";
 import { apiFetch } from "../api";
+import { Alert } from "../lib/dialogs";
 
 function initials(name: string): string {
   return name

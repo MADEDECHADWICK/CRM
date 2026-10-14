@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { tokens } from "@crm/core";
 import { Button, Screen, TextField, Icon, IconSet } from "@crm/ui";
 
 import { useAuth } from "../auth/AuthContext";
+import { Alert } from "../lib/dialogs";
 
 export function LoginScreen() {
   const { login } = useAuth();

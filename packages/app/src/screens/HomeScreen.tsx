@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -32,6 +31,7 @@ import {
 import { countByStage, DonutChart, pipelineDonut } from "../components/charts";
 import { useAuth } from "../auth/AuthContext";
 import { apiFetch } from "../api";
+import { Alert } from "../lib/dialogs";
 
 /** Contacts shown before the user starts searching. */
 const CONTACTS_PREVIEW = 3;

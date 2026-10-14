@@ -7,7 +7,6 @@
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -27,6 +26,7 @@ import {
 import { Button, Icon, IconSet, TextField } from "@crm/ui";
 
 import { apiFetch } from "../api";
+import { Alert } from "../lib/dialogs";
 
 type FormState = {
   name: string;

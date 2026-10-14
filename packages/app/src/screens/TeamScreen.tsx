@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -41,6 +40,7 @@ import {
 
 import { useAuth } from "../auth/AuthContext";
 import { apiFetch } from "../api";
+import { Alert } from "../lib/dialogs";
 
 const ROLE_LABELS: Record<Role, string> = {
   MARKETING_BD: "Marketing & BD",
