@@ -106,7 +106,8 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
-const port = Number(process.env.API_PORT || 4000);
+// Render (and most PaaS) inject the port as PORT; keep API_PORT for local dev.
+const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
 
 /**
  * Hourly breach sweep (BR-019).

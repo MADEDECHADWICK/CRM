@@ -1,0 +1,43 @@
+# Render Blueprint — deploys the API (web service) and the web app (static site).
+#
+# Database: use a free Neon Postgres (Render's free Postgres expires). Set the
+# Neon connection string as DATABASE_URL below. Migrations run on each boot.
+#
+# Set these in the Render dashboard (marked sync:false):
+#   DATABASE_URL   -> Neon pooled connection string (sslmode=require)
+#   JWT_SECRET     -> any long random string
+#   CORS_ORIGINS   -> the static site URL, e.g. https://crm-web.onrender.com
+#   EXPO_PUBLIC_API_URL (static site) -> the API URL, e.g. https://crm-api.onrender.com
+#
+# Mobile: not deployed here — build an installable app with EAS (see HOSTING.md).
+
+services:
+  - type: web
+    name: crm-api
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter api exec prisma generate
+    startCommand: pnpm --filter api exec prisma migrate deploy && pnpm --filter api start
+    envVars:
+      - key: NODE_VERSION
+        value: "24.20.0"
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+
+  - type: web
+    runtime: static
+    name: crm-web
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter web build
+    staticPublishPath: apps/web/dist
+    envVars:
+      - key: EXPO_PUBLIC_API_URL
+        sync: false
+    routes:
+      # Single-page app: unknown paths fall back to index.html.
+      - type: rewrite
+        source: /*
+        destination: /index.html

@@ -6,10 +6,12 @@
   "build": {
     "preview": {
       "distribution": "internal",
-      "channel": "preview"
+      "channel": "preview",
+      "env": { "EXPO_PUBLIC_API_URL": "https://crm-api.onrender.com" }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": { "EXPO_PUBLIC_API_URL": "https://crm-api.onrender.com" }
     }
   },
   "submit": {
