@@ -4,9 +4,9 @@
 // and apps/web import straight from here, so a color or a label only ever
 // lives in one place.
 //
-// The design token set below is our own system: a calm navy-ink + indigo
-// identity for a professional services firm. All platform styling (RN
-// StyleSheet in packages/ui, Tailwind in the web app) maps onto these.
+// The design token set below is the firm's own system: a deep navy identity
+// with an orange accent, matching the corporate palette. All platform styling
+// (RN StyleSheet in packages/ui, Tailwind in the web app) maps onto these.
 
 import type { Stage, FollowupType } from "./crm-types";
 import type { RagStatus } from "./rag";
@@ -15,11 +15,17 @@ export type { Stage, FollowupType };
 
 export const tokens = {
   color: {
-    brand: "#4F46E5",
-    brandStrong: "#4338CA",
-    brandSoft: "#EEF2FF",
-    brandFaint: "#F8F9FF",
+    // Deep navy — the firm's primary brand colour (headers, nav, hero).
+    brand: "#0B2A4A",
+    brandStrong: "#081F38",
+    brandSoft: "#EAF0F6",
+    brandFaint: "#F4F7FB",
     onBrand: "#FFFFFF",
+
+    // Orange — the firm's accent / call-to-action colour.
+    accent: "#F5821F",
+    accentStrong: "#D9700F",
+    accentSoft: "#FEF3E7",
 
     ink: "#111827",
     inkMuted: "#5B6472",

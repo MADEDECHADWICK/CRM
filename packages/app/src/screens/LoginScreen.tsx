@@ -84,6 +84,8 @@ export function LoginScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
+            autoComplete="off"
+            textContentType="none"
           />
 
           <View style={styles.spacing} />
@@ -95,6 +97,8 @@ export function LoginScreen() {
             placeholder="Your password"
             secureTextEntry={!showPassword}
             autoCapitalize="none"
+            autoComplete="off"
+            textContentType="none"
             right={
               <Pressable
                 onPress={() => setShowPassword((value) => !value)}
@@ -156,7 +160,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 14,
-    backgroundColor: "rgba(255,255,255,0.16)",
+    backgroundColor: tokens.color.accent,
     alignItems: "center",
     justifyContent: "center",
   },

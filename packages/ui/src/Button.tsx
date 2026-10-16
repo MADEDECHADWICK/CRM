@@ -119,8 +119,8 @@ const variantStyles: Record<
   { button: ViewStyle; pressed: ViewStyle; text: TextStyle; iconColor: string }
 > = {
   primary: {
-    button: { backgroundColor: tokens.color.brand },
-    pressed: { backgroundColor: tokens.color.brandStrong },
+    button: { backgroundColor: tokens.color.accent },
+    pressed: { backgroundColor: tokens.color.accentStrong },
     text: { color: tokens.color.onBrand },
     iconColor: tokens.color.onBrand,
   },
