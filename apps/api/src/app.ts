@@ -5,6 +5,7 @@ import { securityHeaders } from "./middleware/securityHeaders";
 import { followupsRouter } from "./modules/followups/followups.routes";
 import { authRouter } from "./modules/auth/auth.routes";
 import { organizationsRouter } from "./modules/organizations/organizations.routes";
+import { clientsRouter } from "./modules/clients/clients.routes";
 import { opportunitiesRouter } from "./modules/opportunities/opportunities.routes";
 import { reportingRouter } from "./modules/reporting/reporting.routes";
 import { notesRouter } from "./modules/notes/notes.routes";
@@ -41,6 +42,7 @@ app.get("/", (req, res) => {
 
 app.use("/auth", authRouter);
 app.use("/organizations", organizationsRouter);
+app.use("/clients", clientsRouter);
 app.use("/opportunities", opportunitiesRouter);
 app.use("/reporting", reportingRouter);
 app.use("/followups", followupsRouter);

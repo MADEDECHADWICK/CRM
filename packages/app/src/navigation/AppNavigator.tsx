@@ -9,6 +9,7 @@ import { useAuth } from "../auth/AuthContext";
 import { LoginScreen } from "../screens/LoginScreen";
 import { HomeScreen } from "../screens/HomeScreen";
 import { ProspectsScreen } from "../screens/ProspectsScreen";
+import { ClientsScreen } from "../screens/ClientsScreen";
 import { OpportunitiesScreen } from "../screens/OpportunitiesScreen";
 import { FollowupsScreen } from "../screens/FollowupsScreen";
 import { ReportsScreen } from "../screens/ReportsScreen";
@@ -17,6 +18,7 @@ import { TeamScreen } from "../screens/TeamScreen";
 type ScreenName =
   | "HOME"
   | "PROSPECTS"
+  | "CLIENTS"
   | "PIPELINE"
   | "FOLLOWUPS"
   | "REPORTS"
@@ -28,6 +30,7 @@ function buildScreens(user: {
   return [
     { key: "HOME" as const, label: "Home", icon: IconSet.Home },
     { key: "PROSPECTS" as const, label: "Prospects", icon: IconSet.People },
+    { key: "CLIENTS" as const, label: "Clients", icon: IconSet.Building },
     { key: "PIPELINE" as const, label: "Pipeline", icon: IconSet.Pipeline },
     { key: "FOLLOWUPS" as const, label: "Follow-ups", icon: IconSet.Bell },
     { key: "REPORTS" as const, label: "Reports", icon: IconSet.Chart },
@@ -86,6 +89,10 @@ export function AppNavigator() {
 
     case "PIPELINE":
       content = <OpportunitiesScreen />;
+      break;
+
+    case "CLIENTS":
+      content = <ClientsScreen />;
       break;
 
     case "FOLLOWUPS":
