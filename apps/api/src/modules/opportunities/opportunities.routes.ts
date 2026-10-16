@@ -15,6 +15,8 @@ import {
   customReportRange,
   STAGES,
   LEAD_SOURCES,
+  SUBMISSION_TYPES,
+  BUSINESS_TYPES,
   RAG_LABELS,
   ragFor,
   canCreateOpportunity,
@@ -75,6 +77,10 @@ const transitionBodySchema = z.object({
   amount: z.number().positive().optional(),
   revisitAt: z.string().datetime().optional(),
   lostReason: z.string().optional(),
+  // Review fields: captured on the relevant transitions.
+  submissionType: z.enum(SUBMISSION_TYPES).optional(),
+  businessType: z.enum(BUSINESS_TYPES).optional(),
+  signingPartnerId: z.string().uuid().optional(),
 });
 
 // Deliberately narrower than the full stage list: a new opportunity can only
@@ -220,6 +226,7 @@ opportunitiesRouter.get("/:id", async (req: AuthedRequest, res) => {
       // client join it up from a second request would leave the two out of step.
       department: { include: { head: { select: { id: true, name: true, role: true } } } },
       owner: { select: { id: true, name: true } },
+      signingPartner: { select: { id: true, name: true, role: true } },
       createdBy: { select: { id: true, name: true } },
       notes: {
         include: { author: { select: { id: true, name: true } } },
@@ -409,6 +416,9 @@ opportunitiesRouter.post("/:id/transition", async (req: AuthedRequest, res) => {
       amount: body.data.amount,
       revisitAt: body.data.revisitAt ? new Date(body.data.revisitAt) : undefined,
       lostReason: body.data.lostReason,
+      submissionType: body.data.submissionType,
+      businessType: body.data.businessType,
+      signingPartnerId: body.data.signingPartnerId,
     });
     res.json({ success: true, data: withRag(result) });
   } catch (err: any) {

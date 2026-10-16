@@ -27,6 +27,7 @@ import { Alert } from "../lib/dialogs";
 type FormState = {
   name: string;
   industry: string;
+  country: string;
   email: string;
   phone: string;
   address: string;
@@ -51,6 +52,7 @@ export function OrgFormSheet({
   const [form, setForm] = useState<FormState>({
     name: "",
     industry: "",
+    country: "",
     email: "",
     phone: "",
     address: "",
@@ -64,6 +66,7 @@ export function OrgFormSheet({
     setForm({
       name: organization.name ?? "",
       industry: organization.industry ?? "",
+      country: organization.country ?? "",
       email: organization.email ?? "",
       phone: organization.phone ?? "",
       address: organization.address ?? "",
@@ -91,6 +94,7 @@ export function OrgFormSheet({
         body: JSON.stringify({
           name: form.name.trim(),
           industry: form.industry.trim() || null,
+          country: form.country.trim() || null,
           email: form.email.trim() || null,
           phone: form.phone.trim() || null,
           address: form.address.trim() || null,
@@ -132,6 +136,9 @@ export function OrgFormSheet({
           >
             <Text style={styles.sheetTitle}>Edit client</Text>
             <Text style={styles.sheetSubtitle}>{organization.name}</Text>
+            {organization.clientNumber ? (
+              <Text style={styles.clientNumber}>Client no. {organization.clientNumber}</Text>
+            ) : null}
 
             <TextField
               label="Organization name"
@@ -146,6 +153,14 @@ export function OrgFormSheet({
               value={form.industry}
               onChangeText={(value) => patch({ industry: value })}
               placeholder="Retail"
+            />
+
+            <TextField
+              label="Country"
+              value={form.country}
+              onChangeText={(value) => patch({ country: value })}
+              placeholder="Kenya"
+              autoCapitalize="words"
             />
 
             <TextField
@@ -247,6 +262,14 @@ const styles = StyleSheet.create({
     color: tokens.color.inkMuted,
     marginTop: 2,
     marginBottom: 18,
+  },
+
+  clientNumber: {
+    ...tokens.type.micro,
+    letterSpacing: 0.5,
+    color: tokens.color.brand,
+    marginTop: -12,
+    marginBottom: 16,
   },
 
   actions: {

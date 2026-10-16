@@ -55,6 +55,36 @@ export type FollowupStatus = "PENDING" | "COMPLETED" | "CANCELLED";
 
 export type FollowupType = "CALL" | "EMAIL" | "MEETING";
 
+/** How a proposal was submitted (review: RFP/RFQ together, prequal separately). */
+export type SubmissionType = "RFP" | "RFQ" | "PREQUALIFICATION";
+
+/** Commercial nature of a won job (review: acquisition vs account expansion). */
+export type BusinessType = "NEW_BUSINESS" | "CROSS_SELL" | "UPSELL";
+
+export const SUBMISSION_TYPES: readonly SubmissionType[] = [
+  "RFP",
+  "RFQ",
+  "PREQUALIFICATION",
+];
+
+export const SUBMISSION_TYPE_LABELS: Record<SubmissionType, string> = {
+  RFP: "RFP",
+  RFQ: "RFQ",
+  PREQUALIFICATION: "Prequalification",
+};
+
+export const BUSINESS_TYPES: readonly BusinessType[] = [
+  "NEW_BUSINESS",
+  "CROSS_SELL",
+  "UPSELL",
+];
+
+export const BUSINESS_TYPE_LABELS: Record<BusinessType, string> = {
+  NEW_BUSINESS: "New business",
+  CROSS_SELL: "Cross-selling",
+  UPSELL: "Upselling",
+};
+
 export type Department = {
   id: string;
   name: string;
@@ -67,7 +97,11 @@ export type Department = {
 export type Organization = {
   id: string;
   name: string;
+  /** Short client reference number, auto-assigned (e.g. CL-0001). */
+  clientNumber?: string | null;
   industry?: string | null;
+  /** Client country — drives country-level reporting. */
+  country?: string | null;
   website?: string | null;
   email?: string | null;
   phone?: string | null;
@@ -137,6 +171,14 @@ export type Opportunity = {
   breachNoteDueAt?: string | null;
   /** When the explanation was given and the debt cleared. */
   breachNoteClearedAt?: string | null;
+
+  /** How the proposal was submitted (RFP/RFQ/prequalification). */
+  submissionType?: SubmissionType | null;
+  /** For a won job: new business / cross-selling / upselling. */
+  businessType?: BusinessType | null;
+  /** The Partner who signed the engagement. */
+  signingPartnerId?: string | null;
+  signingPartner?: Pick<UserLite, "id" | "name" | "role"> | null;
 
   organization?: Organization;
   department?: Department;

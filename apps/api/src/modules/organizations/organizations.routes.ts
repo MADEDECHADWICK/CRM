@@ -25,6 +25,7 @@ const createSchema = z.object({
   // API-created organization.
   address: z.string().optional(),
   website: z.string().optional(),
+  country: z.string().optional(),
 });
 
 const updateSchema = z.object({
@@ -37,7 +38,25 @@ const updateSchema = z.object({
     .optional(),
   address: nullableText,
   website: nullableText,
+  country: nullableText,
 });
+
+/**
+ * Next sequential client number, e.g. CL-0001.
+ *
+ * Read-then-increment rather than a database sequence so the format stays in
+ * one place. A concurrent create could pick the same number, so the insert is
+ * retried on the unique-violation the schema already enforces.
+ */
+async function nextClientNumber(): Promise<string> {
+  const last = await prisma.organization.findFirst({
+    where: { clientNumber: { startsWith: "CL-" } },
+    orderBy: { clientNumber: "desc" },
+    select: { clientNumber: true },
+  });
+  const current = last?.clientNumber ? Number(last.clientNumber.slice(3)) : 0;
+  return `CL-${String(current + 1).padStart(4, "0")}`;
+}
 
 // Search + filter in one endpoint — BR-001 is a "search before creating"
 // rule, so the frontend calls GET /organizations?q=... and surfaces matches
@@ -87,7 +106,23 @@ organizationsRouter.post("/", async (req: AuthedRequest, res) => {
   if (!parsed.success) {
     return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: parsed.error.message } });
   }
-  const org = await prisma.organization.create({ data: parsed.data });
+
+  // Auto-assign the client number; retry on the (rare) concurrent collision.
+  let org = null;
+  for (let attempt = 0; attempt < 5 && !org; attempt++) {
+    try {
+      org = await prisma.organization.create({
+        data: { ...parsed.data, clientNumber: await nextClientNumber() },
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === "P2002") continue;
+      throw error;
+    }
+  }
+  if (!org) {
+    return res.status(500).json({ success: false, error: { code: "CLIENT_NUMBER_FAILED", message: "Could not allocate a client number. Try again." } });
+  }
+
   res.status(201).json({ success: true, data: org });
 });
 

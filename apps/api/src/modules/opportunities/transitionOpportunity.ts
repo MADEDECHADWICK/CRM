@@ -5,6 +5,8 @@ import {
   missingForProposal,
   type MissingField,
   type Stage,
+  type SubmissionType,
+  type BusinessType,
 } from "@crm/core";
 
 type TransitionInput = {
@@ -15,6 +17,9 @@ type TransitionInput = {
   amount?: number;       // required specifically when toStage is WON
   revisitAt?: Date;      // required specifically when toStage is DEFERRED
   lostReason?: string;   // optional structured reason when toStage is LOST (BR-007)
+  submissionType?: SubmissionType; // captured when the proposal is sent
+  businessType?: BusinessType;     // required when toStage is WON
+  signingPartnerId?: string;       // required when toStage is WON
 };
 
 export class TransitionRejected extends Error {
@@ -27,7 +32,7 @@ export class TransitionRejected extends Error {
 }
 
 export async function transitionOpportunity(input: TransitionInput) {
-  const { opportunityId, toStage, changedById, reason, amount, revisitAt, lostReason } = input;
+  const { opportunityId, toStage, changedById, reason, amount, revisitAt, lostReason, submissionType, businessType, signingPartnerId } = input;
 
   // Field-level validation before touching the database.
   if (!reason || !reason.trim()) {
@@ -35,6 +40,14 @@ export async function transitionOpportunity(input: TransitionInput) {
   }
   if (toStage === "WON" && (amount === undefined || amount <= 0)) {
     throw new TransitionRejected("Amount is required to mark an opportunity Won.");
+  }
+  // Review: a won job must record how it was won — new business vs expansion —
+  // and who signed it, or the won reports have nothing to group by.
+  if (toStage === "WON" && !businessType) {
+    throw new TransitionRejected("Choose the business type (new business, cross-selling or upselling) for this won job.");
+  }
+  if (toStage === "WON" && !signingPartnerId) {
+    throw new TransitionRejected("Name the signing partner for this won job.");
   }
   if (toStage === "DEFERRED") {
     if (!revisitAt) throw new TransitionRejected("A revisit date is required to defer an opportunity.");
@@ -98,6 +111,14 @@ export async function transitionOpportunity(input: TransitionInput) {
     // which is the opposite of what the recoverable stage is for.
     const recovering = current.stage === "NOT_SUBMITTED" && toStage === "PROPOSAL";
 
+    // Review: the signing partner must be a real Partner.
+    if (toStage === "WON" && signingPartnerId) {
+      const partner = await tx.user.findUnique({ where: { id: signingPartnerId }, select: { role: true } });
+      if (!partner || partner.role !== "PARTNER") {
+        throw new TransitionRejected("The signing partner must be an existing Partner.");
+      }
+    }
+
     const updated = await tx.opportunity.update({
       where: { id: opportunityId },
       data: {
@@ -120,6 +141,12 @@ export async function transitionOpportunity(input: TransitionInput) {
         // Recovery clears the breach marker but not the obligation, for the
         // reason given above.
         proposalBreachedAt: recovering ? null : current.proposalBreachedAt,
+
+        // Review fields. Submission type is set when the proposal goes out;
+        // business type and signing partner are set when it is won.
+        submissionType: toStage === "AWAITING_FEEDBACK" && submissionType ? submissionType : current.submissionType,
+        businessType: toStage === "WON" && businessType ? businessType : current.businessType,
+        signingPartnerId: toStage === "WON" && signingPartnerId ? signingPartnerId : current.signingPartnerId,
       },
     });
 
