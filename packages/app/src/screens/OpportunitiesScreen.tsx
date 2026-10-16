@@ -21,6 +21,10 @@ import {
   ownerEligible,
   rankOwnerCandidates,
   RAG_LABELS,
+  SUBMISSION_TYPES,
+  SUBMISSION_TYPE_LABELS,
+  BUSINESS_TYPES,
+  BUSINESS_TYPE_LABELS,
   type DepartmentDetail,
   type LeadSource,
   type Opportunity,
@@ -28,6 +32,8 @@ import {
   type Organization,
   type RagStatus,
   type Stage,
+  type SubmissionType,
+  type BusinessType,
   type UserLite,
   STAGE_COLORS,
   STAGE_LABELS,
@@ -766,6 +772,13 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
   const [lostReason, setLostReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // Review fields captured on the relevant transitions: submission type when a
+  // proposal is sent, business type + signing partner when it is won.
+  const [submissionType, setSubmissionType] = useState<SubmissionType | null>(null);
+  const [businessType, setBusinessType] = useState<BusinessType | null>(null);
+  const [signingPartnerId, setSigningPartnerId] = useState<string | null>(null);
+  const [partners, setPartners] = useState<UserLite[]>([]);
+
   // BR-020 completeness gate. The server returns the specific outstanding
   // fields on rejection; they are held here so the user gets a checklist
   // instead of a sentence that tells them a count but not which fields.
@@ -899,6 +912,14 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
     loadDetail();
   }, [loadDetail]);
 
+  // Partners are needed for the "signing partner" picker when marking Won.
+  useEffect(() => {
+    if (!token) return;
+    apiFetch<UserLite[]>("/users?role=PARTNER", token)
+      .then((users) => setPartners(users.filter((u) => u.role === "PARTNER")))
+      .catch(() => setPartners([]));
+  }, [token]);
+
   async function submitTransition() {
     if (!token || !detail || !target) return;
 
@@ -910,7 +931,15 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
     if (target === "WON") {
       const parsed = Number(amount);
       if (!amount || !Number.isFinite(parsed) || parsed <= 0) {
-        Alert.alert("Amount required", "Enter the won deal value (KES).");
+        Alert.alert("Amount required", "Enter the won deal value.");
+        return;
+      }
+      if (!businessType) {
+        Alert.alert("Business type required", "Choose new business, cross-selling or upselling.");
+        return;
+      }
+      if (!signingPartnerId) {
+        Alert.alert("Signing partner required", "Choose the Partner who signed this job.");
         return;
       }
     }
@@ -928,7 +957,12 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
         body: JSON.stringify({
           toStage: target,
           reason: reason.trim(),
-          ...(target === "WON" ? { amount: Number(amount) } : {}),
+          ...(target === "WON"
+            ? { amount: Number(amount), businessType, signingPartnerId }
+            : {}),
+          ...(target === "AWAITING_FEEDBACK" && submissionType
+            ? { submissionType }
+            : {}),
           ...(target === "DEFERRED" || target === "AWAITING_FEEDBACK"
             ? // Optional for AWAITING_FEEDBACK — omitted entirely when no
               // date was chosen, so the server doesn't reject a missing one.
@@ -971,6 +1005,9 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
     setAmount("");
     setRevisitAt(null);
     setLostReason("");
+    setSubmissionType(null);
+    setBusinessType(null);
+    setSigningPartnerId(null);
     setMissingFields([]);
   }
 
@@ -1261,6 +1298,31 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
             value={fmtDate(detail.stageEnteredAt)}
             icon={IconSet.Clock}
           />
+
+          {detail.submissionType ? (
+            <InfoRow
+              label="Submission type"
+              value={SUBMISSION_TYPE_LABELS[detail.submissionType]}
+              icon={IconSet.Doc}
+            />
+          ) : null}
+
+          {detail.businessType ? (
+            <InfoRow
+              label="Business type"
+              value={BUSINESS_TYPE_LABELS[detail.businessType]}
+              icon={IconSet.Check}
+            />
+          ) : null}
+
+          {detail.signingPartner ? (
+            <InfoRow
+              label="Signing partner"
+              value={detail.signingPartner.name}
+              icon={IconSet.Person}
+            />
+          ) : null}
+
 
           {detail.revisitAt ? (
             <InfoRow
@@ -1568,6 +1630,56 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
                   onChangeText={setReason}
                   placeholder="e.g. Partner approved terms"
                 />
+
+                {target === "AWAITING_FEEDBACK" ? (
+                  <>
+                    <Text style={styles.formLabel}>Submission type (optional)</Text>
+                    <View style={styles.chipWrap}>
+                      {SUBMISSION_TYPES.map((key) => (
+                        <Chip
+                          key={key}
+                          label={SUBMISSION_TYPE_LABELS[key]}
+                          selected={submissionType === key}
+                          onPress={() =>
+                            setSubmissionType((current) => (current === key ? null : key))
+                          }
+                        />
+                      ))}
+                    </View>
+                  </>
+                ) : null}
+
+                {target === "WON" ? (
+                  <>
+                    <Text style={styles.formLabel}>Business type</Text>
+                    <View style={styles.chipWrap}>
+                      {BUSINESS_TYPES.map((key) => (
+                        <Chip
+                          key={key}
+                          label={BUSINESS_TYPE_LABELS[key]}
+                          selected={businessType === key}
+                          onPress={() => setBusinessType(key)}
+                        />
+                      ))}
+                    </View>
+
+                    <Text style={styles.formLabel}>Signing partner</Text>
+                    <View style={styles.chipWrap}>
+                      {partners.length === 0 ? (
+                        <Text style={styles.formLabel}>Loading partners…</Text>
+                      ) : (
+                        partners.map((partner) => (
+                          <Chip
+                            key={partner.id}
+                            label={partner.name}
+                            selected={signingPartnerId === partner.id}
+                            onPress={() => setSigningPartnerId(partner.id)}
+                          />
+                        ))
+                      )}
+                    </View>
+                  </>
+                ) : null}
 
                 {needsAmount ? (
                   <TextFieldForm
