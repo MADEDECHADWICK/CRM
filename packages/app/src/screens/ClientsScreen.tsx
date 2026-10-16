@@ -19,17 +19,21 @@ import {
 
 import {
   AppHeader,
+  Button,
   Card,
   EmptyState,
   Icon,
   IconSet,
   Screen,
   SearchBar,
+  StatCard,
 } from "@crm/ui";
 
 import { useAuth } from "../auth/AuthContext";
 import { apiFetch } from "../api";
 import { Alert } from "../lib/dialogs";
+import { OrgFormSheet } from "../components/OrgFormSheet";
+import { ContactFormSheet } from "../components/ContactFormSheet";
 
 type WonJob = {
   id: string;
@@ -76,6 +80,10 @@ export function ClientsScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [clientFormOrg, setClientFormOrg] = useState<Organization | null>(null);
+  const [contactFormOrg, setContactFormOrg] = useState<Organization | null>(null);
+  const [editingContact, setEditingContact] = useState<Contact | null>(null);
+
   const load = useCallback(async () => {
     if (!token) return;
     try {
@@ -101,6 +109,25 @@ export function ClientsScreen() {
     }
   }
 
+  function confirmDeleteContact(contact: Contact) {
+    Alert.alert("Delete contact?", `${contact.name} will be removed from this client.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          if (!token) return;
+          try {
+            await apiFetch(`/contacts/${contact.id}`, token, { method: "DELETE" });
+            await load();
+          } catch (error) {
+            Alert.alert("Unable to delete contact", error instanceof Error ? error.message : "Please try again.");
+          }
+        },
+      },
+    ]);
+  }
+
   const filtered = useMemo(() => {
     const lower = query.trim().toLowerCase();
     if (!lower) return clients;
@@ -112,6 +139,15 @@ export function ClientsScreen() {
         (c.industry ?? "").toLowerCase().includes(lower)
     );
   }, [clients, query]);
+
+  const totalBooked = useMemo(
+    () =>
+      clients.reduce(
+        (sum, c) => sum + c.opportunities.reduce((s, j) => s + (j.amount != null ? Number(j.amount) : 0), 0),
+        0
+      ),
+    [clients]
+  );
 
   if (loading) {
     return (
@@ -139,7 +175,20 @@ export function ClientsScreen() {
         <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={tokens.color.brand} />
       }
     >
-      <AppHeader title="Clients" subtitle={`${clients.length} accounts with won work`} />
+      <AppHeader
+        icon={IconSet.Building}
+        title="Clients"
+        subtitle="Accounts with won work"
+      />
+
+      <View style={styles.stats}>
+        <View style={styles.statItem}>
+          <StatCard label="Clients" value={clients.length} icon={IconSet.Building} accent={tokens.color.brand} soft={tokens.color.brandSoft} />
+        </View>
+        <View style={styles.statItem}>
+          <StatCard label="Booked" value={formatAmount(totalBooked)} icon={IconSet.Check} accent={tokens.color.accent} soft={tokens.color.accentSoft} />
+        </View>
+      </View>
 
       <View style={styles.searchWrap}>
         <SearchBar value={query} onChangeText={setQuery} placeholder="Search clients, numbers, countries" />
@@ -177,13 +226,17 @@ export function ClientsScreen() {
                     </Text>
                     <View style={styles.badgeRow}>
                       {client.clientNumber ? (
-                        <Text style={styles.clientNumber}>{client.clientNumber}</Text>
+                        <View style={styles.numberChip}>
+                          <Text style={styles.numberText}>{client.clientNumber}</Text>
+                        </View>
                       ) : null}
                       {client.country ? <Text style={styles.meta}>{client.country}</Text> : null}
                       {client.industry ? <Text style={styles.meta}>{client.industry}</Text> : null}
                     </View>
                     <Text style={styles.summary}>
-                      {client.opportunities.length} won · {formatAmount(booked)}
+                      <Text style={styles.summaryStrong}>{client.opportunities.length} won</Text>
+                      {" · "}
+                      <Text style={styles.summaryAmount}>{formatAmount(booked)}</Text>
                     </Text>
                   </View>
 
@@ -197,6 +250,26 @@ export function ClientsScreen() {
 
               {expanded ? (
                 <View style={styles.detail}>
+                  <View style={styles.actions}>
+                    <Button
+                      title="Edit client"
+                      onPress={() => setClientFormOrg(client)}
+                      variant="secondary"
+                      size="sm"
+                      icon={IconSet.Doc}
+                    />
+                    <Button
+                      title="Add contact"
+                      onPress={() => {
+                        setEditingContact(null);
+                        setContactFormOrg(client);
+                      }}
+                      variant="ghost"
+                      size="sm"
+                      icon={IconSet.Add}
+                    />
+                  </View>
+
                   <Text style={styles.detailHeading}>Jobs won</Text>
                   {client.opportunities.length === 0 ? (
                     <Text style={styles.detailEmpty}>No won jobs on record.</Text>
@@ -224,17 +297,40 @@ export function ClientsScreen() {
 
                   <Text style={styles.detailHeading}>Contacts</Text>
                   {client.contacts.length === 0 ? (
-                    <Text style={styles.detailEmpty}>No contacts on record.</Text>
+                    <Text style={styles.detailEmpty}>No contacts yet — add the people you speak to.</Text>
                   ) : (
                     client.contacts.map((contact) => (
                       <View key={contact.id} style={styles.contact}>
-                        <Text style={styles.contactName}>
-                          {contact.name}
-                          {contact.isPrimary ? "  · Primary" : ""}
-                        </Text>
-                        <Text style={styles.contactMeta} numberOfLines={1}>
-                          {[contact.title, contact.email, contact.phone].filter(Boolean).join(" · ")}
-                        </Text>
+                        <View style={styles.contactText}>
+                          <View style={styles.contactNameRow}>
+                            <Text style={styles.contactName}>{contact.name}</Text>
+                            {contact.isPrimary ? (
+                              <View style={styles.primaryChip}>
+                                <Text style={styles.primaryText}>Primary</Text>
+                              </View>
+                            ) : null}
+                          </View>
+                          <Text style={styles.contactMeta} numberOfLines={1}>
+                            {[contact.title, contact.email, contact.phone].filter(Boolean).join(" · ")}
+                          </Text>
+                        </View>
+                        <View style={styles.contactActions}>
+                          <Button
+                            title="Edit"
+                            onPress={() => {
+                              setEditingContact(contact);
+                              setContactFormOrg(client);
+                            }}
+                            variant="ghost"
+                            size="sm"
+                          />
+                          <Button
+                            title="Delete"
+                            onPress={() => confirmDeleteContact(contact)}
+                            variant="danger"
+                            size="sm"
+                          />
+                        </View>
                       </View>
                     ))
                   )}
@@ -244,37 +340,69 @@ export function ClientsScreen() {
           );
         })
       )}
+
+      {clientFormOrg ? (
+        <OrgFormSheet
+          visible={clientFormOrg !== null}
+          token={token ?? ""}
+          organization={clientFormOrg}
+          onClose={() => setClientFormOrg(null)}
+          onSaved={load}
+        />
+      ) : null}
+
+      {contactFormOrg ? (
+        <ContactFormSheet
+          visible={contactFormOrg !== null}
+          token={token ?? ""}
+          contact={editingContact}
+          organization={contactFormOrg}
+          onClose={() => setContactFormOrg(null)}
+          onSaved={load}
+        />
+      ) : null}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  stats: { flexDirection: "row", gap: 12, marginBottom: 16 },
+  statItem: { flex: 1 },
   searchWrap: { marginBottom: 16 },
   clientCard: { padding: 14 },
   header: { flexDirection: "row", alignItems: "center", gap: 12 },
   avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: tokens.color.brandSoft,
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    backgroundColor: tokens.color.brand,
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: { ...tokens.type.bodyStrong, fontWeight: "800", color: tokens.color.brand },
-  textCol: { flex: 1, gap: 4 },
+  avatarText: { ...tokens.type.bodyStrong, fontWeight: "800", color: tokens.color.onBrand },
+  textCol: { flex: 1, gap: 5 },
   name: { ...tokens.type.bodyStrong, fontSize: 17, color: tokens.color.ink },
   badgeRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
-  clientNumber: { ...tokens.type.micro, letterSpacing: 0.5, color: tokens.color.brand },
+  numberChip: {
+    backgroundColor: tokens.color.accentSoft,
+    borderRadius: tokens.radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  numberText: { ...tokens.type.micro, letterSpacing: 0.5, color: tokens.color.accent },
   meta: { ...tokens.type.caption, color: tokens.color.inkMuted },
   summary: { ...tokens.type.caption, color: tokens.color.inkMuted },
+  summaryStrong: { color: tokens.color.ink, fontWeight: "700" },
+  summaryAmount: { color: tokens.color.brand, fontWeight: "700" },
   detail: { marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: tokens.color.border },
+  actions: { flexDirection: "row", gap: 10, marginBottom: 6 },
   detailHeading: {
     ...tokens.type.micro,
     textTransform: "uppercase",
     color: tokens.color.inkFaint,
     marginBottom: 10,
-    marginTop: 8,
+    marginTop: 14,
   },
   detailEmpty: { ...tokens.type.caption, color: tokens.color.inkMuted, marginBottom: 12 },
   job: {
@@ -290,8 +418,27 @@ const styles = StyleSheet.create({
   jobText: { flex: 1, gap: 2 },
   jobTitle: { ...tokens.type.bodyStrong, color: tokens.color.ink },
   jobMeta: { ...tokens.type.caption, color: tokens.color.inkMuted },
-  jobAmount: { ...tokens.type.bodyStrong, color: tokens.color.brand },
-  contact: { marginBottom: 10 },
-  contactName: { ...tokens.type.body, color: tokens.color.ink },
+  jobAmount: { ...tokens.type.bodyStrong, color: tokens.color.accent },
+  contact: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+    paddingBottom: 12,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.color.border,
+  },
+  contactText: { flex: 1, gap: 3 },
+  contactNameRow: { flexDirection: "row", alignItems: "center", gap: 7 },
+  contactName: { ...tokens.type.body, color: tokens.color.ink, fontWeight: "600" },
+  primaryChip: {
+    backgroundColor: tokens.color.brandSoft,
+    borderRadius: tokens.radius.pill,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  primaryText: { ...tokens.type.micro, letterSpacing: 0, color: tokens.color.brand },
   contactMeta: { ...tokens.type.caption, color: tokens.color.inkMuted },
+  contactActions: { gap: 4, alignItems: "flex-end" },
 });

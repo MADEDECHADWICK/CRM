@@ -176,6 +176,7 @@ export function TeamScreen() {
         }
       >
         <AppHeader
+          icon={IconSet.Building}
           title="Team"
           subtitle="Members, departments and firm-wide performance"
         />

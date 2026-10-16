@@ -26,6 +26,7 @@ import {
   AppHeader,
   BarList,
   Card,
+  IconSet,
   Screen,
   Section,
   Segmented,
@@ -238,7 +239,7 @@ export function ReportsScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={tokens.color.brand} />
         }
       >
-        <AppHeader title="Reports" subtitle={`Management reporting — ${displayCurrency}`} />
+        <AppHeader icon={IconSet.Chart} title="Reports" subtitle={`Management reporting — ${displayCurrency}`} />
 
         <Segmented
           value={period}

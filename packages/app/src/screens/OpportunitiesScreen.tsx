@@ -251,6 +251,7 @@ export function OpportunitiesScreen() {
         }
       >
         <AppHeader
+          icon={IconSet.Pipeline}
           title="Pipeline"
           subtitle="Every opportunity, end to end"
           right={

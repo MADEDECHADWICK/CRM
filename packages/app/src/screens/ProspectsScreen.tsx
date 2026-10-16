@@ -259,6 +259,7 @@ export function ProspectsScreen({
     >
       <>
         <AppHeader
+          icon={IconSet.People}
           title="Prospects"
           subtitle={`${organizations.length} organisations on file`}
         />

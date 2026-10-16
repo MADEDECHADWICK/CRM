@@ -1,7 +1,7 @@
 import { Router } from "express";
 
 import { prisma } from "../../lib/prisma";
-import { requireAuth, AuthedRequest, opportunityScope } from "../../middleware/authorize";
+import { requireAuth, AuthedRequest } from "../../middleware/authorize";
 import { paginationSchema, pageOf } from "../../lib/pagination";
 
 export const clientsRouter = Router();
@@ -27,7 +27,9 @@ clientsRouter.get("/", async (req: AuthedRequest, res) => {
     });
   }
 
-  const scope = opportunityScope(req.user);
+  // Admin (Marketing & BD) sees the whole book; Partners and Managers see only
+  // the clients they are assigned (i.e. won work they own).
+  const scope = req.user!.role === "MARKETING_BD" ? {} : { ownerId: req.user!.id };
 
   const clients = await prisma.organization.findMany({
     where: { opportunities: { some: { ...scope, stage: "WON" } } },

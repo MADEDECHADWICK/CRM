@@ -293,6 +293,7 @@ export function FollowupsScreen() {
         }
       >
         <AppHeader
+          icon={IconSet.Bell}
           title="Follow-ups"
           subtitle={
             pendingCount > 0
