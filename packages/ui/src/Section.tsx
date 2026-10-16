@@ -16,7 +16,10 @@ type SectionProps = {
 export function Section({ title, action }: SectionProps) {
   return (
     <View style={styles.row}>
-      <Text style={styles.title}>{title}</Text>
+      <View style={styles.titleWrap}>
+        <View style={styles.accentBar} />
+        <Text style={styles.title}>{title}</Text>
+      </View>
       {action ? <View>{action}</View> : null}
     </View>
   );
@@ -31,9 +34,23 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
+  titleWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexShrink: 1,
+  },
+
+  accentBar: {
+    width: 3,
+    height: 15,
+    borderRadius: 2,
+    backgroundColor: tokens.color.accent,
+  },
+
   title: {
     ...tokens.type.micro,
     textTransform: "uppercase",
-    color: tokens.color.inkFaint,
+    color: tokens.color.inkMuted,
   },
 });

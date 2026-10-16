@@ -191,7 +191,7 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
         <PageHero
           icon={IconSet.Check}
           iconColor={tokens.color.onBrand}
-          tint={tokens.color.brand}
+          tint={tokens.color.accent}
           title={`${greetingForHour(new Date().getHours())}, ${firstName}.`}
           subtitle={today}
           right={

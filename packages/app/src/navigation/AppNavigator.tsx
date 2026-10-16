@@ -138,7 +138,7 @@ export function AppNavigator() {
                 size={22}
                 color={
                   active
-                    ? tokens.color.brand
+                    ? tokens.color.accent
                     : tokens.color.inkFaint
                 }
               />
@@ -198,6 +198,6 @@ const styles = StyleSheet.create({
   },
 
   navTextActive: {
-    color: tokens.color.brand,
+    color: tokens.color.accent,
   },
 });
