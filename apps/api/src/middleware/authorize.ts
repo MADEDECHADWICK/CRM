@@ -8,11 +8,18 @@ export interface AuthedRequest extends Request {
 
 export async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
-  if (!header) return res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED" } });
+
+  // A `?token=` fallback exists only so file downloads work: a browser link or
+  // a native share cannot attach an Authorization header. Normal API calls use
+  // the header.
+  const queryToken = typeof req.query?.token === "string" ? req.query.token : undefined;
+  const rawToken = header ? header.replace("Bearer ", "") : queryToken;
+
+  if (!rawToken) return res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED" } });
 
   let payload: { id?: string };
   try {
-    payload = jwt.verify(header.replace("Bearer ", ""), process.env.JWT_SECRET!) as { id?: string };
+    payload = jwt.verify(rawToken, process.env.JWT_SECRET!) as { id?: string };
   } catch {
     return res.status(401).json({ success: false, error: { code: "INVALID_TOKEN" } });
   }

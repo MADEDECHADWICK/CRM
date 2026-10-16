@@ -1126,3 +1126,67 @@ reportingRouter.get("/priority-follow-ups", async (req: AuthedRequest, res) => {
     res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build priority follow-ups." } });
   }
 });
+
+// ── Leads report (every lead with its data) ─────────────────────────────────
+//
+// The "see all leads with their data" view: BD/Partner get the whole book,
+// a Manager gets their own. Windows on leadReceivedAt so it reads as "leads
+// received in this period".
+
+reportingRouter.get("/leads", async (req: AuthedRequest, res) => {
+  try {
+    if (!canAccessReporting(req.user)) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Your role is not allowed to access reports." } });
+    }
+    const query = reportQuerySchema.safeParse(req.query);
+    if (!query.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: query.error.message } });
+    const pw = periodWindow(query.data.period, query.data.from, query.data.to);
+    if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
+
+    const scope = opportunityScope(req.user);
+    const opps = await prisma.opportunity.findMany({
+      where: { ...scope, ...(pw.win ? { leadReceivedAt: { gte: pw.win.from, lte: pw.win.to } } : {}) },
+      select: {
+        title: true, service: true, stage: true, amount: true, currency: true,
+        leadSource: true, leadSourceNote: true, leadReceivedAt: true, proposalSubmittedAt: true,
+        submissionType: true, businessType: true, wonAt: true,
+        organization: { select: { name: true, clientNumber: true, country: true, industry: true } },
+        department: { select: { name: true } },
+        owner: { select: { name: true } },
+        signingPartner: { select: { name: true } },
+      },
+      orderBy: { leadReceivedAt: "desc" },
+      take: 500,
+    });
+
+    const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "");
+    const rows = opps.map((o) => ({
+      client: o.organization?.name ?? "Unknown",
+      clientNumber: o.organization?.clientNumber ?? "",
+      country: o.organization?.country ?? "",
+      industry: o.organization?.industry ?? "",
+      service: o.service,
+      department: o.department?.name ?? "",
+      source: o.leadSource === "OTHER" && o.leadSourceNote ? `OTHER: ${o.leadSourceNote}` : o.leadSource,
+      received: day(o.leadReceivedAt),
+      submitted: day(o.proposalSubmittedAt),
+      stage: o.stage,
+      amount: o.amount != null ? toKes(Number(o.amount), o.currency) : 0,
+      owner: o.owner?.name ?? "Unassigned",
+      signingPartner: o.signingPartner?.name ?? "",
+      submissionType: o.submissionType ?? "",
+      businessType: o.businessType ?? "",
+    }));
+
+    if (query.data.format !== "json") {
+      sendTabularReport(res, query.data.format, "leads", `Leads (${query.data.period})`,
+        ["Client", "Client no.", "Country", "Industry", "Service", "Department", "Source", "Received", "Submitted", "Stage", "Amount (KES)", "Owner", "Signing partner", "Submission type", "Business type"],
+        rows.map((r) => [r.client, r.clientNumber, r.country, r.industry, r.service, r.department, r.source, r.received, r.submitted, r.stage, r.amount, r.owner, r.signingPartner, r.submissionType, r.businessType]));
+      return;
+    }
+    res.json({ success: true, data: { period: query.data.period, periodFrom: pw.win?.from.toISOString() ?? null, periodTo: pw.win?.to.toISOString() ?? null, rows } });
+  } catch (error) {
+    console.error("Leads report error:", error);
+    res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build leads report." } });
+  }
+});
