@@ -21,6 +21,10 @@ export function setApiUrl(url: string) {
   baseUrl = url.replace(/\/+$/, "");
 }
 
+export function getApiUrl() {
+  return baseUrl;
+}
+
 /**
  * The session-expiry handler, registered by AuthProvider. A 401 from any
  * request means the token is dead, so the app clears the session and falls
