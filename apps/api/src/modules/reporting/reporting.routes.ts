@@ -1190,3 +1190,59 @@ reportingRouter.get("/leads", async (req: AuthedRequest, res) => {
     res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build leads report." } });
   }
 });
+
+// ── Prequalifications (reported separately from tenders) ────────────────────
+
+reportingRouter.get("/prequalifications", async (req: AuthedRequest, res) => {
+  try {
+    if (!canAccessReporting(req.user)) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Your role is not allowed to access reports." } });
+    }
+    const query = reportQuerySchema.safeParse(req.query);
+    if (!query.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: query.error.message } });
+    const pw = periodWindow(query.data.period, query.data.from, query.data.to);
+    if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
+
+    const scope = opportunityScope(req.user);
+    const opps = await prisma.opportunity.findMany({
+      where: { ...scope, submissionType: "PREQUALIFICATION", ...(pw.win ? { leadReceivedAt: { gte: pw.win.from, lte: pw.win.to } } : {}) },
+      select: {
+        service: true, stage: true, amount: true, currency: true, wonAt: true, proposalSubmittedAt: true,
+        organization: { select: { name: true, country: true } },
+        department: { select: { name: true } },
+        owner: { select: { name: true } },
+      },
+      orderBy: { leadReceivedAt: "desc" },
+      take: 500,
+    });
+
+    const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "");
+    const rows = opps.map((o) => ({
+      client: o.organization?.name ?? "Unknown",
+      country: o.organization?.country ?? "Unspecified",
+      service: o.service,
+      department: o.department?.name ?? "",
+      stage: o.stage,
+      amount: o.amount != null ? toKes(Number(o.amount), o.currency) : 0,
+      owner: o.owner?.name ?? "Unassigned",
+      submitted: day(o.proposalSubmittedAt),
+    }));
+    const totals = {
+      count: rows.length,
+      quoted: rows.reduce((a, r) => a + r.amount, 0),
+      wonCount: opps.filter((o) => o.stage === "WON").length,
+      wonValue: opps.filter((o) => o.stage === "WON").reduce((a, o) => a + (o.amount != null ? toKes(Number(o.amount), o.currency) : 0), 0),
+    };
+
+    if (query.data.format !== "json") {
+      sendTabularReport(res, query.data.format, "prequalifications", `Prequalifications (${query.data.period})`,
+        ["Client", "Country", "Service", "Department", "Stage", "Amount (KES)", "Owner", "Submitted"],
+        rows.map((r) => [r.client, r.country, r.service, r.department, r.stage, r.amount, r.owner, r.submitted]));
+      return;
+    }
+    res.json({ success: true, data: { period: query.data.period, periodFrom: pw.win?.from.toISOString() ?? null, periodTo: pw.win?.to.toISOString() ?? null, rows, totals } });
+  } catch (error) {
+    console.error("Prequalifications error:", error);
+    res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build prequalifications report." } });
+  }
+});

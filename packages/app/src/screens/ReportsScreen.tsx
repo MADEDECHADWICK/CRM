@@ -13,6 +13,8 @@ import {
 
 import {
   formatAmount,
+  FX_TO_KES,
+  REPORT_CURRENCIES,
   REPORT_PERIOD_LABELS,
   SCORECARD_DIMENSIONS,
   tokens,
@@ -22,6 +24,7 @@ import {
 
 import {
   AppHeader,
+  BarList,
   Card,
   Screen,
   Section,
@@ -138,6 +141,59 @@ function ReportSection({ title, path, headers, toCells, token, reloadKey, contro
   );
 }
 
+type ReportChartProps = {
+  title: string;
+  path: string;
+  token: string;
+  reloadKey: number;
+  toItem: (row: Record<string, unknown>) => { label: string; value: number; caption?: string };
+  color?: string;
+  note?: string;
+};
+
+function ReportChart({ title, path, token, reloadKey, toItem, color, note }: ReportChartProps) {
+  const [rows, setRows] = useState<Record<string, unknown>[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setRows(null);
+    setError(null);
+    apiFetch<{ rows: Record<string, unknown>[] }>(path, token)
+      .then((data) => {
+        if (active) setRows(data.rows);
+      })
+      .catch((err) => {
+        if (active) setError(err instanceof Error ? err.message : "Unable to load report");
+      });
+    return () => {
+      active = false;
+    };
+  }, [path, token, reloadKey]);
+
+  const items = (rows ?? [])
+    .map(toItem)
+    .filter((item) => item.value !== 0)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+
+  return (
+    <>
+      <Section title={title} />
+      <Card>
+        {error ? (
+          <Text style={styles.error}>{error}</Text>
+        ) : rows === null ? (
+          <ActivityIndicator color={tokens.color.brand} />
+        ) : (
+          <BarList items={items} color={color} />
+        )}
+        {note ? <Text style={styles.note}>{note}</Text> : null}
+      </Card>
+    </>
+  );
+}
+
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 }
@@ -153,6 +209,7 @@ export function ReportsScreen() {
   const [to, setTo] = useState<Date | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [displayCurrency, setDisplayCurrency] = useState("KES");
 
   async function refresh() {
     setRefreshing(true);
@@ -169,7 +226,10 @@ export function ReportsScreen() {
         ? `?period=custom&from=${startOfDay(from!).toISOString()}&to=${endOfDay(to!).toISOString()}`
         : null
       : `?period=${period}`;
-  const num = (v: unknown) => formatAmount(v as number);
+  // Reports are computed in KES; the selector re-expresses them in the chosen
+  // currency for a partner/manager working in their local currency.
+  const rate = FX_TO_KES[displayCurrency] ?? 1;
+  const num = (v: unknown) => formatAmount(Math.round((v as number) / rate), displayCurrency);
 
   return (
     <Screen>
@@ -178,7 +238,7 @@ export function ReportsScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={tokens.color.brand} />
         }
       >
-        <AppHeader title="Reports" subtitle="Management reporting — KES" />
+        <AppHeader title="Reports" subtitle={`Management reporting — ${displayCurrency}`} />
 
         <Segmented
           value={period}
@@ -193,6 +253,12 @@ export function ReportsScreen() {
           </Card>
         ) : null}
 
+        <Segmented
+          value={displayCurrency}
+          onChange={(key) => setDisplayCurrency(key)}
+          options={REPORT_CURRENCIES.map((code) => ({ key: code, label: code }))}
+        />
+
         {q === null ? (
           <Card>
             <Text style={styles.empty}>Pick both a From and a To date to run a custom range.</Text>
@@ -204,7 +270,7 @@ export function ReportsScreen() {
           path={`/reporting/scorecard${q}&groupBy=${groupBy}`}
           token={token}
           reloadKey={reloadKey}
-          headers={["Group", "Leads", "Quotes (KES)", "Sent", "Wins", "Booked (KES)", "Wins/sent"]}
+          headers={["Group", "Leads", "Quotes", "Sent", "Wins", "Booked", "Wins/sent"]}
           toCells={(r) => [String(r.label), r.leads as number, num(r.quotes), r.sent as number, r.wins as number, num(r.booked), fmt(r.winsPerSent as number | null)]}
           controls={
             <Segmented
@@ -216,12 +282,38 @@ export function ReportsScreen() {
           note="Wins/sent is a period activity ratio, not a matched-cohort conversion rate."
         />
 
+        <ReportChart
+          title={`Booked fees by ${GROUP_LABELS[groupBy].toLowerCase()}`}
+          path={`/reporting/scorecard${q}&groupBy=${groupBy}`}
+          token={token}
+          reloadKey={reloadKey}
+          toItem={(r) => ({ label: String(r.label), value: r.booked as number, caption: num(r.booked) })}
+        />
+
+        <ReportChart
+          title="Quoted demand by industry"
+          path={`/reporting/industry${q}`}
+          token={token}
+          reloadKey={reloadKey}
+          toItem={(r) => ({ label: String(r.label), value: r.quoted as number, caption: num(r.quoted) })}
+        />
+
+        <ReportChart
+          title="Customer acquisition"
+          path={`/reporting/acquisition${q}`}
+          token={token}
+          reloadKey={reloadKey}
+          toItem={(r) => ({ label: String(r.label), value: r.count as number })}
+          color={tokens.color.info}
+          note="First-recorded wins per month."
+        />
+
         <ReportSection
           title="Book of business"
           path={`/reporting/book-of-business${q}`}
           token={token}
           reloadKey={reloadKey}
-          headers={["Group", "New clients", "Existing", "Cross-sell", "Upsell", "Total (KES)"]}
+          headers={["Group", "New clients", "Existing", "Cross-sell", "Upsell", "Total"]}
           toCells={(r) => [String(r.label), num(r.new), num(r.existing), num(r.crossSell), num(r.upsell), num(r.total)]}
           note="New = the client's first won job; cross-sell/upsell from the won business type."
         />
@@ -231,7 +323,7 @@ export function ReportsScreen() {
           path={`/reporting/industry${q}`}
           token={token}
           reloadKey={reloadKey}
-          headers={["Industry", "Quoted (KES)", "Booked (KES)"]}
+          headers={["Industry", "Quoted", "Booked"]}
           toCells={(r) => [String(r.label), num(r.quoted), num(r.booked)]}
         />
 
@@ -240,8 +332,18 @@ export function ReportsScreen() {
           path={`/reporting/sources${q}`}
           token={token}
           reloadKey={reloadKey}
-          headers={["Source", "Leads", "Reached proposal", "Won", "Won value (KES)"]}
+          headers={["Source", "Leads", "Reached proposal", "Won", "Won value"]}
           toCells={(r) => [String(r.label), r.leads as number, r.reachedProposal as number, r.won as number, num(r.wonValue)]}
+        />
+
+        <ReportSection
+          title="Prequalifications"
+          path={`/reporting/prequalifications${q}`}
+          token={token}
+          reloadKey={reloadKey}
+          headers={["Client", "Country", "Service", "Department", "Stage", "Amount", "Owner", "Submitted"]}
+          toCells={(r) => [String(r.client), String(r.country), String(r.service), String(r.department), String(r.stage), num(r.amount), String(r.owner), String(r.submitted)]}
+          note="Prequalifications are reported separately from RFP/RFQ tenders."
         />
 
         <ReportSection
@@ -249,7 +351,7 @@ export function ReportsScreen() {
           path={`/reporting/client-priorities${q}`}
           token={token}
           reloadKey={reloadKey}
-          headers={["Client", "Country", "Booked (KES)"]}
+          headers={["Client", "Country", "Booked"]}
           toCells={(r) => [String(r.name), String(r.country ?? "Unspecified"), num(r.booked)]}
         />
 
@@ -273,7 +375,7 @@ export function ReportsScreen() {
           path={`/reporting/priority-follow-ups${q}`}
           token={token}
           reloadKey={reloadKey}
-          headers={["Client", "Partner", "Quoted (KES)"]}
+          headers={["Client", "Partner", "Quoted"]}
           toCells={(r) => [String(r.client), String(r.partner), num(r.quoted)]}
           note="Largest bids submitted and awaiting a decision."
         />
@@ -283,7 +385,7 @@ export function ReportsScreen() {
           path={`/reporting/leads${q}`}
           token={token}
           reloadKey={reloadKey}
-          headers={["Client", "Country", "Service", "Source", "Received", "Stage", "Amount (KES)", "Owner"]}
+          headers={["Client", "Country", "Service", "Source", "Received", "Stage", "Amount", "Owner"]}
           toCells={(r) => [String(r.client), String(r.country), String(r.service), String(r.source), String(r.received), String(r.stage), num(r.amount), String(r.owner)]}
           note="Download CSV/Word for every lead column."
         />

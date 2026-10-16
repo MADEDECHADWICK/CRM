@@ -25,6 +25,7 @@ import {
   SUBMISSION_TYPE_LABELS,
   BUSINESS_TYPES,
   BUSINESS_TYPE_LABELS,
+  REPORT_CURRENCIES,
   type DepartmentDetail,
   type LeadSource,
   type Opportunity,
@@ -613,24 +614,24 @@ const ownerIsOverride =
             />
           )}
 
-          <View style={styles.amountRow}>
-            <View style={styles.amountFlex}>
-              <TextFieldForm
-                label="Deal value (optional)"
-                value={amount}
-                onChangeText={setAmount}
-                placeholder="e.g. 750000"
-                keyboardType="numeric"
+          <TextFieldForm
+            label="Deal value (optional)"
+            value={amount}
+            onChangeText={setAmount}
+            placeholder="e.g. 750000"
+            keyboardType="numeric"
+          />
+
+          <Text style={styles.formLabel}>Currency</Text>
+          <View style={styles.chipWrap}>
+            {REPORT_CURRENCIES.map((code) => (
+              <Chip
+                key={code}
+                label={code}
+                selected={currency === code}
+                onPress={() => setCurrency(code)}
               />
-            </View>
-            <View style={styles.amountFlex}>
-              <TextFieldForm
-                label="Currency"
-                value={currency}
-                onChangeText={setCurrency}
-                placeholder="KES"
-              />
-            </View>
+            ))}
           </View>
 
           <Text style={styles.formLabel}>

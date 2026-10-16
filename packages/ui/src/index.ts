@@ -1,5 +1,6 @@
 export * from "./AppHeader";
 export * from "./Badge";
+export * from "./BarList";
 export * from "./Button";
 export * from "./Card";
 export * from "./Chip";
