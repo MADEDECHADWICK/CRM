@@ -30,8 +30,9 @@ import {
 
 import { useAuth } from "../auth/AuthContext";
 import { apiFetch, getApiUrl } from "../api";
+import { DateField } from "../components/DateField";
 
-const PERIODS: ReportPeriod[] = ["week", "month", "quarter", "year", "all"];
+const PERIODS: ReportPeriod[] = ["week", "month", "quarter", "year", "all", "custom"];
 
 const GROUP_LABELS: Record<ScorecardDimension, string> = {
   department: "Department",
@@ -137,10 +138,19 @@ function ReportSection({ title, path, headers, toCells, token, reloadKey, contro
   );
 }
 
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+function endOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+}
+
 export function ReportsScreen() {
   const { token } = useAuth();
   const [period, setPeriod] = useState<ReportPeriod>("month");
   const [groupBy, setGroupBy] = useState<ScorecardDimension>("department");
+  const [from, setFrom] = useState<Date | null>(null);
+  const [to, setTo] = useState<Date | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -152,7 +162,13 @@ export function ReportsScreen() {
 
   if (!token) return null;
 
-  const q = `?period=${period}`;
+  const customReady = period === "custom" && from != null && to != null;
+  const q =
+    period === "custom"
+      ? customReady
+        ? `?period=custom&from=${startOfDay(from!).toISOString()}&to=${endOfDay(to!).toISOString()}`
+        : null
+      : `?period=${period}`;
   const num = (v: unknown) => formatAmount(v as number);
 
   return (
@@ -170,6 +186,19 @@ export function ReportsScreen() {
           options={PERIODS.map((key) => ({ key, label: REPORT_PERIOD_LABELS[key] }))}
         />
 
+        {period === "custom" ? (
+          <Card>
+            <DateField label="From" value={from} onChange={setFrom} maximumDate={to ?? new Date()} />
+            <DateField label="To" value={to} onChange={setTo} minimumDate={from ?? undefined} maximumDate={new Date()} />
+          </Card>
+        ) : null}
+
+        {q === null ? (
+          <Card>
+            <Text style={styles.empty}>Pick both a From and a To date to run a custom range.</Text>
+          </Card>
+        ) : (
+          <>
         <ReportSection
           title="Performance scorecard"
           path={`/reporting/scorecard${q}&groupBy=${groupBy}`}
@@ -258,6 +287,8 @@ export function ReportsScreen() {
           toCells={(r) => [String(r.client), String(r.country), String(r.service), String(r.source), String(r.received), String(r.stage), num(r.amount), String(r.owner)]}
           note="Download CSV/Word for every lead column."
         />
+          </>
+        )}
       </ScrollView>
     </Screen>
   );

@@ -656,6 +656,39 @@ async function main() {
     }
   }
 
+  // Review: backfill a client number and country on every organization so the
+  // client list and the country reports have data. Client numbers are
+  // sequential (CL-0001…); country defaults to Kenya (the firm's main office),
+  // with a few illustrative regional clients so multi-country reporting shows.
+  const COUNTRY_BY_NAME: Record<string, string> = {
+    CoastalTelecom: "Tanzania",
+    "MombasaPort Logistics": "Uganda",
+    NyeriSaccos: "Rwanda",
+  };
+  const allOrgs = await prisma.organization.findMany({
+    orderBy: { name: "asc" },
+    select: { id: true, name: true, clientNumber: true, country: true },
+  });
+  let maxNumber = 0;
+  for (const org of allOrgs) {
+    if (org.clientNumber) {
+      const n = Number(org.clientNumber.replace(/\D/g, ""));
+      if (Number.isFinite(n) && n > maxNumber) maxNumber = n;
+    }
+  }
+  for (const org of allOrgs) {
+    const data: { clientNumber?: string; country?: string } = {};
+    if (!org.clientNumber) {
+      maxNumber += 1;
+      data.clientNumber = `CL-${String(maxNumber).padStart(4, "0")}`;
+    }
+    if (COUNTRY_BY_NAME[org.name]) data.country = COUNTRY_BY_NAME[org.name];
+    else if (!org.country) data.country = "Kenya";
+    if (Object.keys(data).length) {
+      await prisma.organization.update({ where: { id: org.id }, data });
+    }
+  }
+
   console.log("Users (password: " + DEMO_PASSWORD + "):");
   console.log({
     partner: john.email,
