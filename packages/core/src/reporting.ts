@@ -303,3 +303,45 @@ export function customReportRange(
 
   return { range: { from: fromDate, to: toDate } };
 }
+
+// ── Management scorecard (the Q3 report's core table) ──────────────────────
+//
+// One shape serves every "X performance" slide: grouped by department, country,
+// signing role or industry, each row carries the five activity figures and the
+// wins/sent ratio. Defining it once means every slide's columns agree.
+
+export const SCORECARD_DIMENSIONS = [
+  "department",
+  "country",
+  "signingPartner",
+  "industry",
+] as const;
+
+export type ScorecardDimension = (typeof SCORECARD_DIMENSIONS)[number];
+
+export type ScorecardRow = {
+  /** Stable id for the group (department/user id, or a raw country/industry). */
+  key: string | null;
+  label: string;
+  /** Leads received in the period. */
+  leads: number;
+  /** Quoted value (KES) of those leads. */
+  quotes: number;
+  /** Proposals sent in the period. */
+  sent: number;
+  /** Deals won in the period. */
+  wins: number;
+  /** Booked value (KES) of those wins. */
+  booked: number;
+  /** wins / sent for the period — an activity ratio, not a cohort rate. */
+  winsPerSent: number | null;
+};
+
+export type ScorecardReport = {
+  period: ReportPeriod;
+  groupBy: ScorecardDimension;
+  periodFrom: string | null;
+  periodTo: string | null;
+  rows: ScorecardRow[];
+  totals: Omit<ScorecardRow, "key" | "label">;
+};

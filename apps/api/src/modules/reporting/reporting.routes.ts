@@ -17,6 +17,8 @@ import {
   isPaidSource,
   sourceLabel,
   summariseTurnaround,
+  SCORECARD_DIMENSIONS,
+  toKes,
   type Stage,
   type StageCounts,
   type BreakdownRow,
@@ -24,6 +26,8 @@ import {
   type SourceAttributionRow,
   type SourceAttributionReport,
   type LeadSource,
+  type ScorecardReport,
+  type ScorecardRow,
 } from "@crm/core";
 
 export const reportingRouter = Router();
@@ -632,5 +636,157 @@ reportingRouter.get("/proposals", async (req: AuthedRequest, res) => {
       success: false,
       error: { code: "REPORTING_FAILED", message: "Unable to build proposal report." },
     });
+  }
+});
+
+// ── Performance scorecard (Leads / Quotes / Sent / Wins / Booked) ───────────
+//
+// The core table behind the "X performance" slides. Grouped by department,
+// country, signing role or industry. Money is converted to KES via the shared
+// FX table so every slide consolidates to the same base currency.
+
+const scorecardQuerySchema = z.object({
+  groupBy: z.enum(SCORECARD_DIMENSIONS).default("department"),
+  period: z.enum(REPORT_PERIODS).default("all"),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  format: z.enum(["json", "csv", "word"]).default("json"),
+});
+
+function escapeCsv(value: unknown): string {
+  const s = value == null ? "" : String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** Sends a report as JSON, CSV (opens in Excel) or a Word .doc, or nothing. */
+function sendTabularReport(
+  res: import("express").Response,
+  format: "csv" | "word",
+  filename: string,
+  title: string,
+  headers: string[],
+  rows: (string | number)[][]
+): void {
+  if (format === "csv") {
+    const body = [headers, ...rows].map((r) => r.map(escapeCsv).join(",")).join("\r\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}.csv"`);
+    res.send(body);
+    return;
+  }
+
+  const head = headers.map((h) => `<th>${h}</th>`).join("");
+  const body = rows
+    .map((r) => `<tr>${r.map((c) => `<td>${c == null ? "" : String(c)}</td>`).join("")}</tr>`)
+    .join("");
+  const html =
+    `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>` +
+    `<head><meta charset='utf-8'><title>${title}</title></head><body>` +
+    `<h2>${title}</h2>` +
+    `<table border='1' cellspacing='0' cellpadding='6'><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>` +
+    `</body></html>`;
+  res.setHeader("Content-Type", "application/msword");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}.doc"`);
+  res.send(html);
+}
+
+reportingRouter.get("/scorecard", async (req: AuthedRequest, res) => {
+  try {
+    if (!canAccessReporting(req.user)) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Your role is not allowed to access reports." } });
+    }
+
+    const query = scorecardQuerySchema.safeParse(req.query);
+    if (!query.success) {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: query.error.message } });
+    }
+
+    const scope = opportunityScope(req.user);
+    const range =
+      query.data.period === "custom"
+        ? customReportRange(query.data.from, query.data.to)
+        : { range: reportPeriodRange(query.data.period) };
+    if ("error" in range) {
+      return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: range.error } });
+    }
+    const win = range.range;
+    const inWindow = (d: Date | null): boolean =>
+      !win || (d != null && d.getTime() >= win.from.getTime() && d.getTime() <= win.to.getTime());
+
+    const [opps, departments, users] = await Promise.all([
+      prisma.opportunity.findMany({
+        where: { ...scope },
+        select: {
+          amount: true, currency: true, leadReceivedAt: true, proposalSubmittedAt: true,
+          wonAt: true, departmentId: true, signingPartnerId: true,
+          organization: { select: { country: true, industry: true } },
+        },
+      }),
+      prisma.department.findMany({ select: { id: true, name: true } }),
+      prisma.user.findMany({ select: { id: true, name: true } }),
+    ]);
+    const deptName = new Map(departments.map((d) => [d.id, d.name]));
+    const userName = new Map(users.map((u) => [u.id, u.name]));
+
+    const groupBy = query.data.groupBy;
+    const keyOf = (o: (typeof opps)[number]): string | null =>
+      groupBy === "department" ? o.departmentId
+        : groupBy === "country" ? o.organization?.country ?? null
+        : groupBy === "industry" ? o.organization?.industry ?? null
+        : o.signingPartnerId ?? null;
+    const labelOf = (k: string | null): string =>
+      groupBy === "department" ? (k ? deptName.get(k) ?? "Unknown" : "Unassigned")
+        : groupBy === "signingPartner" ? (k ? userName.get(k) ?? "Unknown" : "Unassigned")
+        : k ?? "Unspecified";
+
+    const map = new Map<string, ScorecardRow>();
+    for (const o of opps) {
+      const k = keyOf(o);
+      const mapKey = k ?? "__none__";
+      let row = map.get(mapKey);
+      if (!row) {
+        row = { key: k, label: labelOf(k), leads: 0, quotes: 0, sent: 0, wins: 0, booked: 0, winsPerSent: null };
+        map.set(mapKey, row);
+      }
+      const kes = o.amount != null ? toKes(Number(o.amount), o.currency) : 0;
+      if (inWindow(o.leadReceivedAt)) { row.leads += 1; row.quotes += kes; }
+      if (inWindow(o.proposalSubmittedAt)) row.sent += 1;
+      if (inWindow(o.wonAt)) { row.wins += 1; row.booked += kes; }
+    }
+
+    const rows = [...map.values()]
+      .map((r) => ({ ...r, winsPerSent: r.sent ? r.wins / r.sent : null }))
+      .sort((a, b) => b.booked - a.booked || b.leads - a.leads);
+
+    const totals = rows.reduce(
+      (acc, r) => ({ leads: acc.leads + r.leads, quotes: acc.quotes + r.quotes, sent: acc.sent + r.sent, wins: acc.wins + r.wins, booked: acc.booked + r.booked }),
+      { leads: 0, quotes: 0, sent: 0, wins: 0, booked: 0 }
+    );
+
+    const data: ScorecardReport = {
+      period: query.data.period,
+      groupBy,
+      periodFrom: win?.from.toISOString() ?? null,
+      periodTo: win?.to.toISOString() ?? null,
+      rows,
+      totals: { ...totals, winsPerSent: totals.sent ? totals.wins / totals.sent : null },
+    };
+
+    if (query.data.format === "csv" || query.data.format === "word") {
+      const pct = (v: number | null) => (v == null ? "N/A" : `${(v * 100).toFixed(1)}%`);
+      sendTabularReport(
+        res, query.data.format, `scorecard-by-${groupBy}`,
+        `Performance scorecard — by ${groupBy} (${query.data.period})`,
+        ["Group", "Leads", "Quotes (KES)", "Sent", "Wins", "Booked (KES)", "Wins/sent"],
+        [...rows.map((r) => [r.label, r.leads, r.quotes, r.sent, r.wins, r.booked, pct(r.winsPerSent)]),
+         ["Total", totals.leads, totals.quotes, totals.sent, totals.wins, totals.booked, pct(totals.sent ? totals.wins / totals.sent : null)]]
+      );
+      return;
+    }
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error("Scorecard reporting error:", error);
+    res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build scorecard." } });
   }
 });
