@@ -144,6 +144,27 @@ enum FollowupType {
   MEETING
 }
 
+/// How a proposal was submitted to the client.
+///
+/// Review request: RFP and RFQ are reported together, prequalifications
+/// separately. Kept as its own enum rather than a boolean so a third kind can
+/// be added without a schema rewrite.
+enum SubmissionType {
+  RFP
+  RFQ
+  PREQUALIFICATION
+}
+
+/// The commercial nature of a won job.
+///
+/// Review request: new business vs cross-selling vs upselling — this is what
+/// makes "client acquisition" and "account expansion" reportable.
+enum BusinessType {
+  NEW_BUSINESS
+  CROSS_SELL
+  UPSELL
+}
+
 /// Represents a system user.
 ///
 /// Users interact with opportunities, create notes,
@@ -192,6 +213,12 @@ model User {
   /// Ownership is separate from creation because an opportunity
   /// may be transferred between users.
   ownerOpportunities  Opportunity[]       @relation("OpportunityOwner")
+
+  /// Opportunities this Partner signed (review: "signing partner").
+  ///
+  /// Distinct from ownership: the owner runs the deal, the signing partner
+  /// puts their name to the engagement.
+  signedOpportunities Opportunity[]       @relation("OpportunitySigningPartner")
   /// Stage changes performed by this user.
   stageHistoryEntries StageHistoryEntry[] @relation("StageChangedBy")
 
@@ -308,11 +335,18 @@ model Organization {
   /// Official organization name.
   name String
 
+  /// Short client reference number (review: "client number"). Unique when set
+  /// so the same client cannot be filed twice under different numbers.
+  clientNumber String? @unique
+
   /// Optional industry classification.
   ///
   /// This supports segmentation and reporting without making
   /// industry mandatory during initial data capture.
   industry String?
+
+  /// Country of the client — drives the country-level management reports.
+  country String?
 
   /// Optional website.
   website String?
@@ -361,6 +395,8 @@ model Organization {
   @@index([name])
   /// Index supports industry-based filtering and reporting.
   @@index([industry])
+  /// Index supports country-level reporting.
+  @@index([country])
 }
 
 /// Represents a named contact person at a client organization.
@@ -588,6 +624,24 @@ model Opportunity {
   /// reporting can be structured without forcing quotes into free text.
   lostReason String?
 
+  /// How this proposal was submitted (review: RFP/RFQ together,
+  /// prequalifications reported separately). Null until a proposal exists.
+  submissionType SubmissionType?
+
+  /// For a WON job: new business, cross-selling or upselling (review:
+  /// account-acquisition vs account-expansion reporting). Null until won.
+  businessType BusinessType?
+
+  /// The Partner who signed the engagement (review: "signing partner").
+  ///
+  /// Distinct from the owner: the owner runs the deal day to day, the signing
+  /// partner puts their name to it. SetNull on delete so removing a user never
+  /// deletes the deal.
+  signingPartnerId String?
+
+  /// Relationship to the signing Partner.
+  signingPartner   User?  @relation("OpportunitySigningPartner", fields: [signingPartnerId], references: [id], onDelete: SetNull)
+
   /// Reference to the external organization.
   organizationId String
 
@@ -684,6 +738,12 @@ model Opportunity {
   /// so this lets the aggregate range-scan instead of scanning every deal they
   /// own and filtering.
   @@index([ownerId, stageEnteredAt])
+  /// Submission-type reporting (RFP/RFQ vs prequalification).
+  @@index([submissionType])
+  /// Business-type reporting (new business / cross-sell / upsell).
+  @@index([businessType])
+  /// Signing-partner reporting.
+  @@index([signingPartnerId])
 }
 
 /// Records every stage transition made to an Opportunity.
