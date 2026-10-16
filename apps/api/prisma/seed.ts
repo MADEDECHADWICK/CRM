@@ -77,10 +77,10 @@ function lastYear(daysBeforeNow: number): Date {
   return d;
 }
 
-async function upsertOrganization(name: string, industry: string) {
+async function upsertOrganization(name: string, industry: string, country = "Kenya") {
   const existing = await prisma.organization.findFirst({ where: { name } });
   if (existing) return existing;
-  return prisma.organization.create({ data: { name, industry } });
+  return prisma.organization.create({ data: { name, industry, country } });
 }
 
 async function main() {
@@ -173,6 +173,8 @@ async function main() {
     proposalBreachedAt?: Date;
     breachNoteRequired?: boolean;
     breachNoteDueAt?: Date;
+    // Review: how the won job was won (defaults to new business).
+    businessType?: "NEW_BUSINESS" | "CROSS_SELL" | "UPSELL";
   };
 
   const now = new Date();
@@ -269,6 +271,7 @@ async function main() {
       stage: "WON",
       service: "Tax registration & TIN issuance",
       amount: 320000,
+      businessType: "CROSS_SELL",
       owner: "john",
       enteredAt: withinMonth(15),
       leadSource: "WALK_IN",
@@ -366,6 +369,7 @@ async function main() {
       stage: "WON",
       service: "Laboratory audit support",
       amount: 1200000,
+      businessType: "UPSELL",
       owner: "mary",
       enteredAt: withinQuarter(70),
       leadSource: "TENDER",
@@ -506,6 +510,10 @@ async function main() {
           ? { breachNoteRequired: opp.breachNoteRequired }
           : {}),
         ...(opp.breachNoteDueAt ? { breachNoteDueAt: opp.breachNoteDueAt } : {}),
+        // Review: a won job records how it was won and who signed it.
+        ...(opp.stage === "WON"
+          ? { businessType: opp.businessType ?? "NEW_BUSINESS", signingPartnerId: john.id }
+          : {}),
       },
     });
 

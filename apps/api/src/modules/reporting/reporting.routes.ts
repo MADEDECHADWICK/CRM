@@ -19,6 +19,9 @@ import {
   summariseTurnaround,
   SCORECARD_DIMENSIONS,
   toKes,
+  daysBetween,
+  median,
+  type ReportPeriod,
   type Stage,
   type StageCounts,
   type BreakdownRow,
@@ -711,7 +714,7 @@ reportingRouter.get("/scorecard", async (req: AuthedRequest, res) => {
     }
     const win = range.range;
     const inWindow = (d: Date | null): boolean =>
-      !win || (d != null && d.getTime() >= win.from.getTime() && d.getTime() <= win.to.getTime());
+      d != null && (!win || (d.getTime() >= win.from.getTime() && d.getTime() <= win.to.getTime()));
 
     const [opps, departments, users] = await Promise.all([
       prisma.opportunity.findMany({
@@ -788,5 +791,338 @@ reportingRouter.get("/scorecard", async (req: AuthedRequest, res) => {
   } catch (error) {
     console.error("Scorecard reporting error:", error);
     res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build scorecard." } });
+  }
+});
+
+// ── Shared period parsing for the management report endpoints ───────────────
+
+const reportQuerySchema = z.object({
+  period: z.enum(REPORT_PERIODS).default("all"),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  format: z.enum(["json", "csv", "word"]).default("json"),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+type PeriodWindow = { from: Date; to: Date } | null;
+
+function periodWindow(
+  period: ReportPeriod,
+  from?: string,
+  to?: string
+): { ok: true; win: PeriodWindow } | { ok: false; error: string } {
+  const range =
+    period === "custom" ? customReportRange(from, to) : { range: reportPeriodRange(period) };
+  if ("error" in range) return { ok: false, error: range.error ?? "Invalid period." };
+  return { ok: true, win: range.range ?? null };
+}
+
+function inWindow(d: Date | null | undefined, win: PeriodWindow): boolean {
+  // A missing date never counts. With no window (period=all) we count every
+  // record that HAS the date at all; with a window, only those inside it.
+  return d != null && (!win || (d.getTime() >= win.from.getTime() && d.getTime() <= win.to.getTime()));
+}
+
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// ── Book of business (new / existing / cross-sell / upsell) ─────────────────
+//
+// New clients = the client's first-ever won job; existing = a later won job
+// that is not classified as cross-sell/upsell. Cross-sell and upsell come from
+// the businessType captured at Won.
+
+const bookQuerySchema = reportQuerySchema.extend({
+  groupBy: z.enum(["overall", "department"]).default("overall"),
+});
+
+reportingRouter.get("/book-of-business", async (req: AuthedRequest, res) => {
+  try {
+    if (!canAccessReporting(req.user)) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Your role is not allowed to access reports." } });
+    }
+    const query = bookQuerySchema.safeParse(req.query);
+    if (!query.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: query.error.message } });
+    const pw = periodWindow(query.data.period, query.data.from, query.data.to);
+    if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
+
+    const scope = opportunityScope(req.user);
+    const [won, departments] = await Promise.all([
+      prisma.opportunity.findMany({
+        where: { ...scope, wonAt: { not: null } },
+        select: { amount: true, currency: true, wonAt: true, businessType: true, departmentId: true, organizationId: true },
+      }),
+      prisma.department.findMany({ select: { id: true, name: true } }),
+    ]);
+    const deptName = new Map(departments.map((d) => [d.id, d.name]));
+
+    const firstWin = new Map<string, number>();
+    for (const o of won) {
+      const t = o.wonAt!.getTime();
+      const current = firstWin.get(o.organizationId);
+      if (current === undefined || t < current) firstWin.set(o.organizationId, t);
+    }
+
+    type Row = { key: string | null; label: string; new: number; existing: number; crossSell: number; upsell: number; total: number };
+    const rowsMap = new Map<string, Row>();
+    for (const o of won) {
+      if (!inWindow(o.wonAt, pw.win)) continue;
+      const kes = o.amount != null ? toKes(Number(o.amount), o.currency) : 0;
+      const key = query.data.groupBy === "department" ? o.departmentId : null;
+      const label = query.data.groupBy === "department" ? deptName.get(o.departmentId) ?? "Unknown" : "All departments";
+      const mapKey = key ?? "__all__";
+      let row = rowsMap.get(mapKey);
+      if (!row) {
+        row = { key, label, new: 0, existing: 0, crossSell: 0, upsell: 0, total: 0 };
+        rowsMap.set(mapKey, row);
+      }
+      const isFirst = firstWin.get(o.organizationId) === o.wonAt!.getTime();
+      if (o.businessType === "CROSS_SELL") row.crossSell += kes;
+      else if (o.businessType === "UPSELL") row.upsell += kes;
+      else if (isFirst) row.new += kes;
+      else row.existing += kes;
+      row.total += kes;
+    }
+
+    const rows = [...rowsMap.values()].sort((a, b) => b.total - a.total);
+    const totals = rows.reduce(
+      (a, r) => ({ new: a.new + r.new, existing: a.existing + r.existing, crossSell: a.crossSell + r.crossSell, upsell: a.upsell + r.upsell, total: a.total + r.total }),
+      { new: 0, existing: 0, crossSell: 0, upsell: 0, total: 0 }
+    );
+
+    if (query.data.format !== "json") {
+      sendTabularReport(res, query.data.format, "book-of-business", `Book of business (${query.data.period})`,
+        ["Group", "New clients", "Existing clients", "Cross-sell", "Upsell", "Total (KES)"],
+        [...rows.map((r) => [r.label, r.new, r.existing, r.crossSell, r.upsell, r.total]),
+         ["Total", totals.new, totals.existing, totals.crossSell, totals.upsell, totals.total]]);
+      return;
+    }
+    res.json({ success: true, data: { period: query.data.period, groupBy: query.data.groupBy, periodFrom: pw.win?.from.toISOString() ?? null, periodTo: pw.win?.to.toISOString() ?? null, rows, totals } });
+  } catch (error) {
+    console.error("Book of business error:", error);
+    res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build book of business." } });
+  }
+});
+
+// ── Customer acquisition (first-recorded wins per month) ────────────────────
+
+reportingRouter.get("/acquisition", async (req: AuthedRequest, res) => {
+  try {
+    if (!canAccessReporting(req.user)) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Your role is not allowed to access reports." } });
+    }
+    const query = reportQuerySchema.safeParse(req.query);
+    if (!query.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: query.error.message } });
+    const pw = periodWindow(query.data.period, query.data.from, query.data.to);
+    if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
+
+    const scope = opportunityScope(req.user);
+    const won = await prisma.opportunity.findMany({ where: { ...scope, wonAt: { not: null } }, select: { wonAt: true, organizationId: true } });
+    const firstWin = new Map<string, number>();
+    for (const o of won) {
+      const t = o.wonAt!.getTime();
+      const current = firstWin.get(o.organizationId);
+      if (current === undefined || t < current) firstWin.set(o.organizationId, t);
+    }
+
+    const buckets = new Map<string, number>();
+    for (const firstT of firstWin.values()) {
+      const d = new Date(firstT);
+      if (!inWindow(d, pw.win)) continue;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      buckets.set(key, (buckets.get(key) ?? 0) + 1);
+    }
+    const rows = [...buckets.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, count]) => ({ month, label: `${MONTH_LABELS[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}`, count }));
+    const total = rows.reduce((a, r) => a + r.count, 0);
+
+    if (query.data.format !== "json") {
+      sendTabularReport(res, query.data.format, "customer-acquisition", `Customer acquisition (${query.data.period})`,
+        ["Month", "First-recorded acquisitions"], [...rows.map((r) => [r.label, r.count]), ["Total", total]]);
+      return;
+    }
+    res.json({ success: true, data: { period: query.data.period, periodFrom: pw.win?.from.toISOString() ?? null, periodTo: pw.win?.to.toISOString() ?? null, rows, total } });
+  } catch (error) {
+    console.error("Acquisition error:", error);
+    res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build acquisition report." } });
+  }
+});
+
+// ── Industry performance (quoted demand + booked fees) ──────────────────────
+
+reportingRouter.get("/industry", async (req: AuthedRequest, res) => {
+  try {
+    if (!canAccessReporting(req.user)) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Your role is not allowed to access reports." } });
+    }
+    const query = reportQuerySchema.safeParse(req.query);
+    if (!query.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: query.error.message } });
+    const pw = periodWindow(query.data.period, query.data.from, query.data.to);
+    if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
+
+    const scope = opportunityScope(req.user);
+    const opps = await prisma.opportunity.findMany({
+      where: { ...scope },
+      select: { amount: true, currency: true, leadReceivedAt: true, wonAt: true, organization: { select: { industry: true } } },
+    });
+    const map = new Map<string, { key: string | null; label: string; quoted: number; booked: number }>();
+    for (const o of opps) {
+      const industry = o.organization?.industry ?? null;
+      const mapKey = industry ?? "__none__";
+      let row = map.get(mapKey);
+      if (!row) { row = { key: industry, label: industry ?? "Unspecified", quoted: 0, booked: 0 }; map.set(mapKey, row); }
+      const kes = o.amount != null ? toKes(Number(o.amount), o.currency) : 0;
+      if (inWindow(o.leadReceivedAt, pw.win)) row.quoted += kes;
+      if (inWindow(o.wonAt, pw.win)) row.booked += kes;
+    }
+    const rows = [...map.values()].filter((r) => r.quoted !== 0 || r.booked !== 0).sort((a, b) => b.booked - a.booked || b.quoted - a.quoted);
+
+    if (query.data.format !== "json") {
+      sendTabularReport(res, query.data.format, "industry-performance", `Industry performance (${query.data.period})`,
+        ["Industry", "Quoted (KES)", "Booked (KES)"], rows.map((r) => [r.label, r.quoted, r.booked]));
+      return;
+    }
+    res.json({ success: true, data: { period: query.data.period, periodFrom: pw.win?.from.toISOString() ?? null, periodTo: pw.win?.to.toISOString() ?? null, rows } });
+  } catch (error) {
+    console.error("Industry error:", error);
+    res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build industry report." } });
+  }
+});
+
+// ── Client priorities (largest booked accounts) ─────────────────────────────
+
+reportingRouter.get("/client-priorities", async (req: AuthedRequest, res) => {
+  try {
+    if (!canAccessReporting(req.user)) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Your role is not allowed to access reports." } });
+    }
+    const query = reportQuerySchema.safeParse(req.query);
+    if (!query.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: query.error.message } });
+    const pw = periodWindow(query.data.period, query.data.from, query.data.to);
+    if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
+    const limit = query.data.limit ?? 10;
+
+    const scope = opportunityScope(req.user);
+    const won = await prisma.opportunity.findMany({
+      where: { ...scope, wonAt: { not: null } },
+      select: { amount: true, currency: true, wonAt: true, organization: { select: { id: true, name: true, country: true } } },
+    });
+    const map = new Map<string, { clientId: string; name: string; country: string | null; booked: number }>();
+    for (const o of won) {
+      if (!inWindow(o.wonAt, pw.win)) continue;
+      const org = o.organization;
+      const kes = o.amount != null ? toKes(Number(o.amount), o.currency) : 0;
+      let row = map.get(org.id);
+      if (!row) { row = { clientId: org.id, name: org.name, country: org.country ?? null, booked: 0 }; map.set(org.id, row); }
+      row.booked += kes;
+    }
+    const rows = [...map.values()].sort((a, b) => b.booked - a.booked).slice(0, limit);
+
+    if (query.data.format !== "json") {
+      sendTabularReport(res, query.data.format, "client-priorities", `Client priorities (${query.data.period})`,
+        ["Client", "Country", "Booked (KES)"], rows.map((r) => [r.name, r.country ?? "Unspecified", r.booked]));
+      return;
+    }
+    res.json({ success: true, data: { period: query.data.period, periodFrom: pw.win?.from.toISOString() ?? null, periodTo: pw.win?.to.toISOString() ?? null, rows } });
+  } catch (error) {
+    console.error("Client priorities error:", error);
+    res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build client priorities." } });
+  }
+});
+
+// ── Proposal turnaround by country ──────────────────────────────────────────
+
+reportingRouter.get("/turnaround", async (req: AuthedRequest, res) => {
+  try {
+    if (!canAccessReporting(req.user)) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Your role is not allowed to access reports." } });
+    }
+    const query = reportQuerySchema.safeParse(req.query);
+    if (!query.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: query.error.message } });
+    const pw = periodWindow(query.data.period, query.data.from, query.data.to);
+    if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
+
+    const scope = opportunityScope(req.user);
+    const opps = await prisma.opportunity.findMany({
+      where: { ...scope, proposalSubmittedAt: { not: null } },
+      select: { leadReceivedAt: true, proposalSubmittedAt: true, organization: { select: { country: true } } },
+    });
+    const map = new Map<string, { key: string | null; label: string; samples: number[] }>();
+    for (const o of opps) {
+      if (!inWindow(o.proposalSubmittedAt, pw.win)) continue;
+      const days = daysBetween(o.leadReceivedAt, o.proposalSubmittedAt);
+      if (days === null) continue;
+      const country = o.organization?.country ?? null;
+      const mapKey = country ?? "__none__";
+      let row = map.get(mapKey);
+      if (!row) { row = { key: country, label: country ?? "Unspecified", samples: [] }; map.set(mapKey, row); }
+      row.samples.push(days);
+    }
+    const rows = [...map.values()]
+      .map((r) => ({
+        key: r.key,
+        label: r.label,
+        validPairs: r.samples.length,
+        meanDays: r.samples.length ? r.samples.reduce((a, b) => a + b, 0) / r.samples.length : null,
+        medianDays: median(r.samples),
+      }))
+      .sort((a, b) => b.validPairs - a.validPairs);
+
+    if (query.data.format !== "json") {
+      const num = (v: number | null) => (v == null ? "N/A" : v.toFixed(1));
+      sendTabularReport(res, query.data.format, "turnaround-by-country", `Proposal turnaround by country (${query.data.period})`,
+        ["Country", "Valid date pairs", "Mean days", "Median days"],
+        rows.map((r) => [r.label, r.validPairs, num(r.meanDays), num(r.medianDays)]));
+      return;
+    }
+    res.json({ success: true, data: { period: query.data.period, periodFrom: pw.win?.from.toISOString() ?? null, periodTo: pw.win?.to.toISOString() ?? null, rows } });
+  } catch (error) {
+    console.error("Turnaround error:", error);
+    res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build turnaround report." } });
+  }
+});
+
+// ── Priority follow-ups (largest submitted bids) ────────────────────────────
+
+reportingRouter.get("/priority-follow-ups", async (req: AuthedRequest, res) => {
+  try {
+    if (!canAccessReporting(req.user)) {
+      return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Your role is not allowed to access reports." } });
+    }
+    const query = reportQuerySchema.safeParse(req.query);
+    if (!query.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: query.error.message } });
+    const pw = periodWindow(query.data.period, query.data.from, query.data.to);
+    if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
+    const limit = query.data.limit ?? 10;
+
+    const scope = opportunityScope(req.user);
+    const submitted = await prisma.opportunity.findMany({
+      where: { ...scope, stage: "AWAITING_FEEDBACK" },
+      select: {
+        id: true, title: true, amount: true, currency: true, proposalSubmittedAt: true,
+        organization: { select: { name: true } },
+        signingPartner: { select: { name: true } },
+        owner: { select: { name: true } },
+      },
+    });
+    const rows = submitted
+      .filter((o) => inWindow(o.proposalSubmittedAt, pw.win))
+      .map((o) => ({
+        client: o.organization?.name ?? "Unknown",
+        partner: o.signingPartner?.name ?? o.owner?.name ?? "Unassigned",
+        quoted: o.amount != null ? toKes(Number(o.amount), o.currency) : 0,
+      }))
+      .sort((a, b) => b.quoted - a.quoted)
+      .slice(0, limit);
+
+    if (query.data.format !== "json") {
+      sendTabularReport(res, query.data.format, "priority-follow-ups", `Priority follow-ups (${query.data.period})`,
+        ["Client", "Partner", "Quoted (KES)"], rows.map((r) => [r.client, r.partner, r.quoted]));
+      return;
+    }
+    res.json({ success: true, data: { period: query.data.period, periodFrom: pw.win?.from.toISOString() ?? null, periodTo: pw.win?.to.toISOString() ?? null, rows } });
+  } catch (error) {
+    console.error("Priority follow-ups error:", error);
+    res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build priority follow-ups." } });
   }
 });
