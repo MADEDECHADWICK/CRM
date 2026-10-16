@@ -69,8 +69,8 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 20,
     backgroundColor: tokens.color.brandSoft,
-    borderBottomWidth: 1,
-    borderBottomColor: tokens.color.brand,
+    borderBottomWidth: 3,
+    borderBottomColor: tokens.color.accent,
   },
 
   mark: {

@@ -30,8 +30,8 @@ export function AppHeader({
   return (
     <PageHero
       icon={icon ?? IconSet.Pipeline}
-      tint={tokens.color.brandSoft}
-      iconColor={tokens.color.brand}
+      tint={tokens.color.accent}
+      iconColor={tokens.color.onBrand}
       title={title}
       subtitle={subtitle}
       right={right}
