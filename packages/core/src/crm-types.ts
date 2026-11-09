@@ -107,6 +107,20 @@ export type Organization = {
   phone?: string | null;
   address?: string | null;
   description?: string | null;
+  isExistingClient?: boolean;
+  sourceKey?: string | null;
+  sourceData?: {
+    kind: "PROSPECT" | "CUSTOMER";
+    partnerLead?: string;
+    recommendedOffer?: string;
+    planningFeeKES?: string | null;
+    pursuitOrder?: string;
+    region?: string;
+    location?: string;
+    marketSegment?: string;
+    paymentTerms?: string;
+    customerStatus?: string;
+  } | null;
 };
 
 // A named person at a client organization. Distinct from

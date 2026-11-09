@@ -1,11 +1,12 @@
 {
   "expo": {
-    "name": "CRM Web",
+    "name": "Ronalds Africa CRM",
     "slug": "crm-web",
     "version": "1.0.0",
     "orientation": "default",
     "userInterfaceStyle": "light",
     "web": {
+      "favicon": "./assets/ronalds-favicon.png",
       "bundler": "metro",
       "output": "single"
     }

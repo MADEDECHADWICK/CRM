@@ -86,7 +86,7 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
       const [summaryData, opportunityData, contactData] = await Promise.all([
         apiFetch<ReportingSummary>("/reporting/summary", token),
         apiFetch<Opportunity[]>("/opportunities", token),
-        apiFetch<Contact[]>("/contacts", token),
+        apiFetch<Contact[]>("/contacts?limit=500", token),
       ]);
 
       setSummary(summaryData);

@@ -7,6 +7,12 @@ import { reportPeriodRange, REPORT_PERIODS, type ReportPeriod, type LeadSource }
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 
+// Demo data must be an explicit development action, never a production seed.
+if (process.env.ALLOW_DEMO_SEED !== "true") {
+  console.error("Demo seed is disabled. Use the company import instead. For an isolated demo database only, set ALLOW_DEMO_SEED=true.");
+  process.exit(1);
+}
+
 const DEMO_PASSWORD = "password123";
 
 const DAY_MS = 24 * 60 * 60 * 1000;

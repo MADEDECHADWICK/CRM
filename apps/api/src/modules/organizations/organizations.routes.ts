@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma";
 import { requireAuth, AuthedRequest, opportunityScope } from "../../middleware/authorize";
 import { paginationSchema, pageOf } from "../../lib/pagination";
+import { directorySearch, prospectDirectoryWhere } from "../../lib/organizationViews";
 
 export const organizationsRouter = Router();
 organizationsRouter.use(requireAuth);
@@ -63,6 +64,8 @@ async function nextClientNumber(): Promise<string> {
 // before offering a create form. q matches the name, industry is an
 // exact match for filtering (PRD 6.1).
 organizationsRouter.get("/", async (req: AuthedRequest, res) => {
+  const focus = z.string().uuid().optional().safeParse(req.query.id);
+  if (!focus.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "Invalid organization id." } });
   const qParam = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
   const industryParam =
     typeof req.query.industry === "string" && req.query.industry.trim() !== ""
@@ -77,28 +80,32 @@ organizationsRouter.get("/", async (req: AuthedRequest, res) => {
     });
   }
 
-  const orgs = await prisma.organization.findMany({
-    where: {
-      ...(qParam
-        ? { name: { contains: qParam, mode: "insensitive" } }
-        : {}),
+  const where = {
+      ...(focus.data ? { id: focus.data } : {}),
+      ...(req.query.view === "prospects" ? prospectDirectoryWhere() : {}),
+      ...directorySearch(qParam),
       ...(industryParam ? { industry: industryParam } : {}),
-    },
+  };
+  const orgs = await prisma.organization.findMany({
+    where,
     // The list is shared by every role, so the embedded opportunities must be
     // narrowed with the same scope as the pipeline itself. Returning every
     // deal of every org handed a Manager other people's titles, owners and
     // amounts (BR-012). The `stage` is kept because the client derives an
     // org's client/prospect badge from it.
     include: {
+      ...(req.query.paginated === "true" ? { contacts: { orderBy: { name: "asc" as const } } } : {}),
       opportunities: {
         where: opportunityScope(req.user),
         select: { id: true, stage: true, ownerId: true },
       },
     },
-    orderBy: { name: "asc" },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
     ...pageOf(page.data),
   });
-  res.json({ success: true, data: orgs });
+  res.json({ success: true, data: req.query.paginated === "true"
+    ? { items: orgs, total: await prisma.organization.count({ where }) }
+    : orgs });
 });
 
 organizationsRouter.post("/", async (req: AuthedRequest, res) => {

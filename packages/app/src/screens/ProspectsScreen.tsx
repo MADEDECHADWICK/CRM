@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -32,6 +32,9 @@ import { ContactFormSheet } from "../components/ContactFormSheet";
 import { OrgFormSheet } from "../components/OrgFormSheet";
 import { apiFetch } from "../api";
 import { Alert } from "../lib/dialogs";
+import { useDirectoryPage } from "../components/useDirectoryPage";
+import { DirectoryPager } from "../components/DirectoryPager";
+import { OrganizationSourceDetails } from "../components/OrganizationSourceDetails";
 
 function initials(name: string): string {
   return name
@@ -60,12 +63,16 @@ export function ProspectsScreen({
   const cardOffsets = useRef<Record<string, number>>({});
   const pendingFocusRef = useRef<string | null>(null);
 
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
-  const [contacts, setContacts] = useState<Contact[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // A focused directory contact may belong to an existing customer. Include
+  // all accounts for that lookup, while the normal tab shows prospects only.
+  const [focused, setFocused] = useState<string | null>(null);
+  const directory = useDirectoryPage<Organization & { contacts: Contact[] }>(
+    focused ? `/organizations?id=${encodeURIComponent(focused)}` : "/organizations?view=prospects", token, query
+  );
+  const { items: organizations, loading, error: loadError, load } = directory;
+  const contacts = useMemo(() => organizations.flatMap((org) => org.contacts), [organizations]);
   const [refreshing, setRefreshing] = useState(false);
 
   const [formOpen, setFormOpen] = useState(false);
@@ -73,30 +80,6 @@ export function ProspectsScreen({
   const [formOrg, setFormOrg] = useState<Organization | null>(null);
   const [clientFormOpen, setClientFormOpen] = useState(false);
   const [clientFormOrg, setClientFormOrg] = useState<Organization | null>(null);
-
-  const load = useCallback(async () => {
-    if (!token) return;
-
-    // Fetched together so expanding a client shows its people instantly
-    // instead of waiting on a second round trip.
-    try {
-      const [orgData, contactData] = await Promise.all([
-        apiFetch<Organization[]>("/organizations", token),
-        apiFetch<Contact[]>("/contacts", token),
-      ]);
-
-      setOrganizations(orgData);
-      setContacts(contactData);
-      setLoadError(null);
-    } catch (err) {
-      console.error("Prospects loading error:", err);
-      setLoadError(err instanceof Error ? err.message : "Unable to load clients.");
-    }
-  }, [token]);
-
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
 
   async function refresh() {
     try {
@@ -122,30 +105,7 @@ export function ProspectsScreen({
     return grouped;
   }, [contacts]);
 
-  const filtered = useMemo(() => {
-    const lower = query.trim().toLowerCase();
-
-    if (!lower) return organizations;
-
-    return organizations.filter(
-      (organization) => {
-        const orgMatches =
-          organization.name.toLowerCase().includes(lower) ||
-          (organization.industry ?? "").toLowerCase().includes(lower) ||
-          (organization.email ?? "").toLowerCase().includes(lower);
-
-        // Also match a contact's name so searching "Jane" finds her client.
-        const peopleMatch = (contactsByOrg.get(organization.id) ?? []).some(
-          (contact) =>
-            contact.name.toLowerCase().includes(lower) ||
-            (contact.title ?? "").toLowerCase().includes(lower) ||
-            (contact.email ?? "").toLowerCase().includes(lower)
-        );
-
-        return orgMatches || peopleMatch;
-      }
-    );
-  }, [organizations, query, contactsByOrg]);
+  const filtered = organizations;
 
   // Arriving from Home with a client selected: drop any active search so the
   // client is definitely in the list, and expand it.
@@ -155,6 +115,8 @@ export function ProspectsScreen({
     // Stored rather than scrolled to directly — the list may not have loaded
     // yet, so the card has no measured position at this point.
     pendingFocusRef.current = focusOrganizationId;
+    setFocused(focusOrganizationId);
+    directory.setPage(0);
     setQuery("");
     setExpandedId(focusOrganizationId);
     onFocusHandled?.();
@@ -261,16 +223,18 @@ export function ProspectsScreen({
         <AppHeader
           icon={IconSet.People}
           title="Prospects"
-          subtitle={`${organizations.length} organisations on file`}
+          subtitle={`${directory.total.toLocaleString()} ${focused ? "matching accounts" : "prospects on file"}`}
         />
 
         <View style={styles.searchWrap}>
           <SearchBar
             value={query}
-            onChangeText={setQuery}
-            placeholder="Search clients, industries or people"
+            onChangeText={(value) => { setFocused(null); directory.setPage(0); setQuery(value); }}
+            placeholder="Search prospects, countries, partners or people"
           />
         </View>
+
+        <DirectoryPager page={directory.page} total={directory.total} busy={directory.busy} onChange={directory.setPage} />
 
         {filtered.length === 0 ? (
           <EmptyState
@@ -377,6 +341,7 @@ export function ProspectsScreen({
 
                 {expanded ? (
                   <View style={styles.detail}>
+                    <OrganizationSourceDetails organization={organization} />
                     <Text style={styles.detailHeading}>
                       Contact information
                     </Text>

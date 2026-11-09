@@ -365,8 +365,17 @@ model Organization {
   /// Detailed chronological notes belong in the Note model.
   description String?
 
+  /// Existing customer records do not imply a won opportunity or revenue.
+  isExistingClient Boolean @default(false)
+
+  /// Stable import identity; prevents duplicate accounts on a repeated import.
+  sourceKey String? @unique
+
+  /// Original worksheet references and business metadata, without fabricated
+  /// opportunities, ownership, fees, contact details, or lifecycle dates.
+  sourceData Json?
+
   /// All business opportunities associated with this organization.
-  ///
   /// This relationship is critical because an organization can
   /// have multiple independent opportunities.
   opportunities Opportunity[]

@@ -1,0 +1,21 @@
+.ra-login, .ra-login * { box-sizing: border-box; }
+.ra-login { --ra-navy: #0b2a4a; --ra-orange: #f5821f; display: grid; grid-template-columns: 1.08fr 1fr; flex: 1; width: 100%; height: 100vh; height: 100dvh; overflow-y: auto; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172e44; background: #fbfaf7; }
+.ra-login p, .ra-login h1, .ra-login h2 { margin: 0; }
+.ra-form { margin-top: 34px; }.ra-form label { display: block; margin: 0 0 9px; font-size: 12px; font-weight: 600; color: #34475a; }
+.ra-field { display: flex; align-items: center; gap: 12px; height: 53px; background: #fff; border: 1px solid #dce1e3; border-radius: 8px; padding: 0 15px; margin-bottom: 22px; color: #9aa6b0; transition: box-shadow .15s, border-color .15s; }
+.ra-field:focus-within { border-color: #446884; box-shadow: 0 0 0 3px #0b2a4a0d; }
+.ra-field input { width: 100%; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; color: #172e44; font: inherit; font-size: 13px; }.ra-field input::placeholder { color: #9da7b0; }.ra-field > svg { flex-shrink: 0; width: 18px; }
+.ra-eye { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 34px; border: 0; background: transparent; color: #83929f; cursor: pointer; border-radius: 4px; }.ra-eye:hover { background: #f1f4f5; color: #0b2a4a; }
+.ra-submit { width: 100%; display: flex; align-items: center; justify-content: center; gap: 22px; height: 53px; margin-top: 7px; border: 1px solid #e97b1d; border-radius: 8px; background: #f5821f; color: #1f2a33; cursor: pointer; font: inherit; font-size: 13px; font-weight: 650; box-shadow: 0 4px 10px #f5821f1a; transition: background .15s, transform .15s; }.ra-submit:hover:not(:disabled) { background: #f79847; transform: translateY(-1px); }.ra-submit:disabled { opacity: .7; cursor: wait; }
+.ra-login button:focus-visible, .ra-brand:focus-visible { outline: 3px solid #cf742a; outline-offset: 4px; }
+.ra-error { padding: 11px 13px; margin: -5px 0 16px !important; border: 1px solid #f0cccc; border-radius: 7px; background: #fff1ee; color: #a62d28; font-size: 12px; line-height: 1.6; }
+.ra-spinner { width: 17px; height: 17px; border: 2px solid #0b2a4a30; border-top-color: #0b2a4a; border-radius: 50%; animation: ra-spin .7s linear infinite; }@keyframes ra-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ra-login * { transition: none !important; }.ra-spinner { animation: none; } }
+.ra-story { display: flex; align-items: center; justify-content: center; padding: 48px 32px; color: white; background: radial-gradient(ellipse at 100% 80%, #174b66 0, transparent 55%), linear-gradient(145deg, #0c2d4d, #081f36); }
+.ra-brand { display: flex; flex-direction: column; align-items: center; gap: 24px; text-align: center; text-decoration: none; color: white; }
+.ra-brand h1 { font: 700 clamp(32px, 3.4vw, 54px)/1.2 Georgia, "Times New Roman", serif; letter-spacing: -1px; }
+.ra-brand h1 > span { display: block; margin-top: 18px; font: 500 18px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 6px; color: #f5821f; }
+.ra-access { display: flex; align-items: center; justify-content: center; min-width: 0; padding: 48px 9%; }
+.ra-form-wrap { width: 100%; max-width: 390px; margin: auto; padding: 32px 0; scroll-margin-top: 30px; }
+.ra-access h2 { font-size: 34px; line-height: 1.2; letter-spacing: -1px; font-weight: 600; }
+@media (max-width: 740px) { .ra-login { display: flex; flex-direction: column; }.ra-story { padding: 30px 24px; flex-shrink: 0; }.ra-brand { gap: 15px; }.ra-brand h1 { font-size: 30px; }.ra-brand h1 > span { margin-top: 10px; font-size: 14px; }.ra-access { flex: 1; padding: 24px; }.ra-form-wrap { max-width: 430px; padding: 12px 0 24px; }.ra-access h2 { font-size: 28px; }.ra-form { margin-top: 24px; } }

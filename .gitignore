@@ -7,3 +7,6 @@ dist
 .env.local
 *.log
 .turbo
+.local-data/
+apps/api/.local-data/
+__pycache__/

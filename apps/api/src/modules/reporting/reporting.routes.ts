@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
+import { clientDirectoryWhere, prospectDirectoryWhere } from "../../lib/organizationViews";
 import {
   requireAuth,
   AuthedRequest,
@@ -56,10 +57,8 @@ const summaryQuerySchema = z.object({
   to: z.string().datetime().optional(),
 });
 
-// Every number here comes from a live aggregation over Opportunity records
-// (BR-014) — never a hand-typed figure. The count fields are what make
-// "CLIENTS = opportunities in WON stage" real: client status is derived,
-// not stored (BR-002).
+// Deal metrics use real Opportunity records. All-time directory totals also
+// include imported accounts; a customer record never creates won revenue.
 //
 // The optional ?period= window filters on stageEnteredAt, i.e. deals that
 // entered their current stage inside the window: "prospects raised this
@@ -143,17 +142,26 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
         }),
       ]);
 
+    const directoryTotals = query.data.period === "all"
+      ? await Promise.all([
+          prisma.organization.count({ where: prospectDirectoryWhere() }),
+          prisma.organization.count({ where: clientDirectoryWhere(
+            req.user!.role === "MARKETING_BD" ? {} : { ownerId: req.user!.id }
+          ) }),
+        ])
+      : null;
+
     res.json({
       success: true,
       data: {
         period: query.data.period,
         periodFrom: range.range?.from.toISOString() ?? null,
         periodTo: range.range?.to.toISOString() ?? null,
-        totalProspects: prospects._count,
+        totalProspects: directoryTotals?.[0] ?? prospects._count,
         totalLeads: leads._count,
         totalProposals: proposals._count,
         totalAwaitingFeedback: awaitingFeedback._count,
-        totalClients: clients._count,
+        totalClients: directoryTotals?.[1] ?? clients._count,
         // Amounts are Decimal in the schema and Prisma serialises them as JSON
         // strings; breakdown and sources already convert with Number(), so
         // summary must too or the same figure is a string here and a number

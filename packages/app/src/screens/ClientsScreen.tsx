@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -34,6 +34,9 @@ import { apiFetch } from "../api";
 import { Alert } from "../lib/dialogs";
 import { OrgFormSheet } from "../components/OrgFormSheet";
 import { ContactFormSheet } from "../components/ContactFormSheet";
+import { useDirectoryPage } from "../components/useDirectoryPage";
+import { DirectoryPager } from "../components/DirectoryPager";
+import { OrganizationSourceDetails } from "../components/OrganizationSourceDetails";
 
 type WonJob = {
   id: string;
@@ -73,32 +76,15 @@ function fmtDate(iso: string | null | undefined): string {
 export function ClientsScreen() {
   const { token } = useAuth();
 
-  const [clients, setClients] = useState<Client[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const directory = useDirectoryPage<Client>("/clients", token, query);
+  const { items: clients, loading, error: loadError, load } = directory;
   const [refreshing, setRefreshing] = useState(false);
 
   const [clientFormOrg, setClientFormOrg] = useState<Organization | null>(null);
   const [contactFormOrg, setContactFormOrg] = useState<Organization | null>(null);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
-
-  const load = useCallback(async () => {
-    if (!token) return;
-    try {
-      const data = await apiFetch<Client[]>("/clients", token);
-      setClients(data);
-      setLoadError(null);
-    } catch (err) {
-      console.error("Clients loading error:", err);
-      setLoadError(err instanceof Error ? err.message : "Unable to load clients.");
-    }
-  }, [token]);
-
-  useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
 
   async function refresh() {
     try {
@@ -128,17 +114,7 @@ export function ClientsScreen() {
     ]);
   }
 
-  const filtered = useMemo(() => {
-    const lower = query.trim().toLowerCase();
-    if (!lower) return clients;
-    return clients.filter(
-      (c) =>
-        c.name.toLowerCase().includes(lower) ||
-        (c.clientNumber ?? "").toLowerCase().includes(lower) ||
-        (c.country ?? "").toLowerCase().includes(lower) ||
-        (c.industry ?? "").toLowerCase().includes(lower)
-    );
-  }, [clients, query]);
+  const filtered = clients;
 
   const totalBooked = useMemo(
     () =>
@@ -178,21 +154,23 @@ export function ClientsScreen() {
       <AppHeader
         icon={IconSet.Building}
         title="Clients"
-        subtitle="Accounts with won work"
+        subtitle="Customer directory and accounts with won work"
       />
 
       <View style={styles.stats}>
         <View style={styles.statItem}>
-          <StatCard label="Clients" value={clients.length} icon={IconSet.Building} accent={tokens.color.brand} soft={tokens.color.brandSoft} />
+          <StatCard label="Matching clients" value={directory.total} icon={IconSet.Building} accent={tokens.color.brand} soft={tokens.color.brandSoft} />
         </View>
         <View style={styles.statItem}>
-          <StatCard label="Booked" value={formatAmount(totalBooked)} icon={IconSet.Check} accent={tokens.color.accent} soft={tokens.color.accentSoft} />
+          <StatCard label="Booked on this page" value={formatAmount(totalBooked)} icon={IconSet.Check} accent={tokens.color.accent} soft={tokens.color.accentSoft} />
         </View>
       </View>
 
       <View style={styles.searchWrap}>
-        <SearchBar value={query} onChangeText={setQuery} placeholder="Search clients, numbers, countries" />
+        <SearchBar value={query} onChangeText={(value) => { directory.setPage(0); setQuery(value); }} placeholder="Search clients, locations, regions or people" />
       </View>
+
+      <DirectoryPager page={directory.page} total={directory.total} busy={directory.busy} onChange={directory.setPage} />
 
       {filtered.length === 0 ? (
         <EmptyState
@@ -200,7 +178,7 @@ export function ClientsScreen() {
           title={clients.length === 0 ? "No clients yet" : "Nothing matches"}
           subtitle={
             clients.length === 0
-              ? "An organization becomes a client once it has a won job."
+              ? "Your imported customer records and organizations with won work appear here."
               : "Try a different name, number or country."
           }
         />
@@ -232,9 +210,10 @@ export function ClientsScreen() {
                       ) : null}
                       {client.country ? <Text style={styles.meta}>{client.country}</Text> : null}
                       {client.industry ? <Text style={styles.meta}>{client.industry}</Text> : null}
+                      {client.address ? <Text style={styles.meta}>{client.address}</Text> : null}
                     </View>
                     <Text style={styles.summary}>
-                      <Text style={styles.summaryStrong}>{client.opportunities.length} won</Text>
+                      <Text style={styles.summaryStrong}>{client.opportunities.length ? `${client.opportunities.length} won` : "Existing customer"}</Text>
                       {" · "}
                       <Text style={styles.summaryAmount}>{formatAmount(booked)}</Text>
                     </Text>
@@ -250,6 +229,7 @@ export function ClientsScreen() {
 
               {expanded ? (
                 <View style={styles.detail}>
+                  <OrganizationSourceDetails organization={client} />
                   <View style={styles.actions}>
                     <Button
                       title="Edit client"

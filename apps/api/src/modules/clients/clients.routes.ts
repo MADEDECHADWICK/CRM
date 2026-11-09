@@ -3,6 +3,7 @@ import { Router } from "express";
 import { prisma } from "../../lib/prisma";
 import { requireAuth, AuthedRequest } from "../../middleware/authorize";
 import { paginationSchema, pageOf } from "../../lib/pagination";
+import { clientDirectoryWhere, directorySearch } from "../../lib/organizationViews";
 
 export const clientsRouter = Router();
 clientsRouter.use(requireAuth);
@@ -10,13 +11,9 @@ clientsRouter.use(requireAuth);
 /**
  * The client database.
  *
- * Deliberately separate from /organizations (the prospect list): a "client" is
- * an organization with at least one won job, and this endpoint returns only
- * those, together with their contacts and the jobs won from them. It is a
- * read-only view of the book of business, not a workflow stage.
- *
- * Data scope follows the pipeline: a Manager sees clients they have won work
- * for; BD/Partner see the whole book.
+ * Existing imported customers and organizations with won work. Importing a
+ * customer never fabricates a won job. Imported directory entries are shared
+ * just like /organizations; embedded won jobs retain their existing scope.
  */
 clientsRouter.get("/", async (req: AuthedRequest, res) => {
   const page = paginationSchema.safeParse(req.query);
@@ -31,8 +28,10 @@ clientsRouter.get("/", async (req: AuthedRequest, res) => {
   // the clients they are assigned (i.e. won work they own).
   const scope = req.user!.role === "MARKETING_BD" ? {} : { ownerId: req.user!.id };
 
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
+  const where = { AND: [clientDirectoryWhere(scope), directorySearch(q)] };
   const clients = await prisma.organization.findMany({
-    where: { opportunities: { some: { ...scope, stage: "WON" } } },
+    where,
     include: {
       contacts: { orderBy: [{ isPrimary: "desc" }, { name: "asc" }] },
       opportunities: {
@@ -51,9 +50,11 @@ clientsRouter.get("/", async (req: AuthedRequest, res) => {
         orderBy: { wonAt: "desc" },
       },
     },
-    orderBy: { name: "asc" },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
     ...pageOf(page.data),
   });
 
-  res.json({ success: true, data: clients });
+  res.json({ success: true, data: req.query.paginated === "true"
+    ? { items: clients, total: await prisma.organization.count({ where }) }
+    : clients });
 });
