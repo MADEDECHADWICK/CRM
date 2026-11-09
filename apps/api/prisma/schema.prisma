@@ -199,12 +199,11 @@ model User {
 
   /// Departments this user is appointed to run.
   ///
-  /// The inverse of Department.headId. It reads as a list because Prisma
-  /// models the inverse side of a one-to-one relation as an array, but
-  /// headId being @unique means it holds at most one entry. Where a user is
-  /// appointed head of the department they also belong to — the common case —
-  /// this and departmentId will name the same department.
+  /// Partners may lead several departments independently of primary membership.
   headedDepartments   Department[]        @relation("DepartmentHead")
+
+  assignedProspects Organization[] @relation("ProspectAssignee")
+  prospectAssignmentsMade Organization[] @relation("ProspectAssignedBy")
 
   /// Opportunities created by this user.
   createdOpprtunites  Opportunity[]       @relation("OpportunityCreatedBy")
@@ -271,6 +270,7 @@ model User {
 /// Therefore, Department belongs to Opportunity rather than
 /// assigning one global department directly to Organization.
 model Department {
+  assignedAccounts Organization[] @relation("AccountDepartmentAssignment")
   /// Primary UUID identifier.
   id String @id @default(uuid())
 
@@ -287,17 +287,8 @@ model Department {
 
   /// The person appointed to run this department.
   ///
-  /// @unique here is what enforces one half of the rule — a single person
-  /// cannot head two departments — and it does so in the schema rather than in
-  /// a route handler. A constraint that lives only in application code is one
-  /// direct API call away from not existing, and this is exactly the invariant
-  /// you would want to hold even if the UI enforced it perfectly.
-  ///
-  /// Nullable deliberately: a department can be opened before anybody is
-  /// appointed to run it, and until that happens assignment falls back to "any
-  /// Partner or Manager" rather than blocking Marketing from raising a deal
-  /// (see needsOwnerOverrideReason in @crm/core).
-  headId String? @unique
+  /// A Partner may head several departments.
+  headId String?
 
   /// The department head, when one has been appointed.
   ///
@@ -320,6 +311,7 @@ model Department {
 
   /// Automatically updated whenever the department changes.
   updatedAt DateTime @updatedAt
+  @@index([headId])
 }
 
 /// Represents an external organization or company.
@@ -375,6 +367,15 @@ model Organization {
   /// opportunities, ownership, fees, contact details, or lifecycle dates.
   sourceData Json?
 
+  /// Directory responsibility, independent of opportunity ownership/revenue.
+  assignedToId String?
+  assignedTo User? @relation("ProspectAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  assignedById String?
+  assignedBy User? @relation("ProspectAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  assignedAt DateTime?
+  assignedDepartmentId String?
+  assignedDepartment Department? @relation("AccountDepartmentAssignment", fields: [assignedDepartmentId], references: [id], onDelete: SetNull)
+
   /// All business opportunities associated with this organization.
   /// This relationship is critical because an organization can
   /// have multiple independent opportunities.
@@ -406,6 +407,8 @@ model Organization {
   @@index([industry])
   /// Index supports country-level reporting.
   @@index([country])
+  @@index([assignedToId])
+  @@index([assignedDepartmentId])
 }
 
 /// Represents a named contact person at a client organization.

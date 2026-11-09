@@ -1,9 +1,11 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
+import { organizationScope, opportunityScope, type AccessUser } from "../lib/accessScope";
+export { organizationScope, opportunityScope, contactScope, noteScope, followupScope } from "../lib/accessScope";
 
 export interface AuthedRequest extends Request {
-  user?: { id: string; role: "MARKETING_BD" | "PARTNER" | "MANAGER" };
+  user?: AccessUser;
 }
 
 export async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
@@ -35,24 +37,19 @@ export async function requireAuth(req: AuthedRequest, res: Response, next: NextF
   // lookup per request is the price of authority that is never stale.
   const user = await prisma.user.findUnique({
     where: { id: payload.id },
-    select: { id: true, role: true },
+    select: { id: true, role: true, departmentId: true, headedDepartments: { select: { id: true } } },
   });
 
   if (!user) {
     return res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED" } });
   }
 
-  req.user = { id: user.id, role: user.role };
+  req.user = { id: user.id, role: user.role, departmentId: user.departmentId, headedDepartmentIds: user.headedDepartments.map(d => d.id) };
   next();
 }
 
-// The single place the Marketing&BD/Partner-see-all vs Manager-sees-own
-// rule lives — every query in every module imports this instead of
-// re-implementing the check.
-export function opportunityScope(user: AuthedRequest["user"]) {
-  if (!user) return { id: "never-matches" };
-  if (user.role === "MARKETING_BD" || user.role === "PARTNER") return {};
-  return { ownerId: user.id };
+export async function scopedOrganization(user: AuthedRequest["user"], id: string) {
+  return prisma.organization.findFirst({ where: { AND: [{ id }, organizationScope(user)] } });
 }
 
 /**

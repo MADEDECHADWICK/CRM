@@ -7,7 +7,7 @@
 // app shares one visual voice.
 
 import type { ReactNode } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Platform, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 
 import { tokens } from "@crm/core";
 
@@ -31,6 +31,7 @@ export function PageHero({
   subtitle,
   right,
 }: PageHeroProps) {
+  const { width } = useWindowDimensions();
   return (
     <View style={styles.band}>
       <View
@@ -47,13 +48,13 @@ export function PageHero({
       </View>
 
       <View style={styles.textCol}>
-        <Text style={styles.title}>{title}</Text>
+        <Text accessibilityRole="header" style={[styles.title, width < 600 && { fontSize: 24, lineHeight: 31 }]}>{title}</Text>
         {subtitle ? (
           <Text style={styles.subtitle}>{subtitle}</Text>
         ) : null}
       </View>
 
-      {right ? <View style={styles.right}>{right}</View> : null}
+      {right ? <View style={[styles.right, width < 600 && { marginLeft: "auto" }]}>{right}</View> : null}
     </View>
   );
 }
@@ -62,40 +63,43 @@ const styles = StyleSheet.create({
   band: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    marginHorizontal: -20,
-    marginTop: -2,
-    marginBottom: 18,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    backgroundColor: tokens.color.brandSoft,
-    borderBottomWidth: 3,
-    borderBottomColor: tokens.color.accent,
+    gap: 14,
+    flexWrap: "wrap",
+    marginBottom: 26,
+    paddingTop: 6,
+    paddingBottom: 24,
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.color.border,
   },
 
   mark: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
+    width: 46,
+    height: 46,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
 
   textCol: {
     flex: 1,
-    paddingRight: 12,
+    minWidth: 150,
+    paddingRight: 4,
   },
 
   title: {
-    ...tokens.type.h2,
-    color: tokens.color.ink,
-    letterSpacing: -0.3,
+    fontSize: 30,
+    lineHeight: 38,
+    fontWeight: "600",
+    fontFamily: Platform.OS === "web" ? 'Georgia, "Times New Roman", serif' : undefined,
+    color: tokens.color.brand,
+    letterSpacing: -0.7,
   },
 
   subtitle: {
     ...tokens.type.caption,
     color: tokens.color.inkMuted,
-    marginTop: 3,
+    marginTop: 5,
+    lineHeight: 19,
   },
 
   right: {

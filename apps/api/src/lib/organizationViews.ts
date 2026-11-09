@@ -1,9 +1,8 @@
 import type { Prisma } from "../../generated/prisma/client";
 
-// The imported directory has the same shared access as /organizations.
-// Won opportunities embedded in a client record still use the caller's scope.
-export function clientDirectoryWhere(scope: Prisma.OpportunityWhereInput): Prisma.OrganizationWhereInput {
-  return { OR: [{ isExistingClient: true }, { opportunities: { some: { ...scope, stage: "WON" } } }] };
+// Classification is independent of visibility; callers AND it with access.
+export function clientDirectoryWhere(): Prisma.OrganizationWhereInput {
+  return { OR: [{ isExistingClient: true }, { opportunities: { some: { stage: "WON" } } }] };
 }
 
 export function prospectDirectoryWhere(): Prisma.OrganizationWhereInput {
@@ -16,6 +15,8 @@ export function directorySearch(q?: string): Prisma.OrganizationWhereInput {
   return { OR: [
     { name: contains }, { clientNumber: contains }, { industry: contains },
     { country: contains }, { address: contains }, { email: contains }, { phone: contains },
+    { assignedTo: { is: { name: contains } } },
+    { assignedDepartment: { is: { name: contains } } },
     { contacts: { some: { OR: [{ name: contains }, { email: contains }, { phone: contains }, { title: contains }] } } },
     ...["partnerLead", "region", "recommendedOffer", "customerStatus"].map((field) =>
       ({ sourceData: { path: [field], string_contains: q, mode: "insensitive" as const } })),

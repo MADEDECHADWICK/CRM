@@ -1,7 +1,8 @@
 import { Router } from "express";
 
 import { prisma } from "../../lib/prisma";
-import { requireAuth, AuthedRequest } from "../../middleware/authorize";
+import { requireAuth, AuthedRequest, organizationScope, opportunityScope } from "../../middleware/authorize";
+import { assignmentInclude } from "../organizations/prospectActions";
 import { paginationSchema, pageOf } from "../../lib/pagination";
 import { clientDirectoryWhere, directorySearch } from "../../lib/organizationViews";
 
@@ -12,8 +13,8 @@ clientsRouter.use(requireAuth);
  * The client database.
  *
  * Existing imported customers and organizations with won work. Importing a
- * customer never fabricates a won job. Imported directory entries are shared
- * just like /organizations; embedded won jobs retain their existing scope.
+ * customer never fabricates a won job. Account assignment controls access to
+ * both imported customers and clients converted through the pipeline.
  */
 clientsRouter.get("/", async (req: AuthedRequest, res) => {
   const page = paginationSchema.safeParse(req.query);
@@ -24,15 +25,14 @@ clientsRouter.get("/", async (req: AuthedRequest, res) => {
     });
   }
 
-  // Admin (Marketing & BD) sees the whole book; Partners and Managers see only
-  // the clients they are assigned (i.e. won work they own).
-  const scope = req.user!.role === "MARKETING_BD" ? {} : { ownerId: req.user!.id };
+  const scope = opportunityScope(req.user);
 
   const q = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
-  const where = { AND: [clientDirectoryWhere(scope), directorySearch(q)] };
+  const where = { AND: [organizationScope(req.user), clientDirectoryWhere(), directorySearch(q)] };
   const clients = await prisma.organization.findMany({
     where,
     include: {
+      ...assignmentInclude,
       contacts: { orderBy: [{ isPrimary: "desc" }, { name: "asc" }] },
       opportunities: {
         where: { ...scope, stage: "WON" },

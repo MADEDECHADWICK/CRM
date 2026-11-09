@@ -1,0 +1,40 @@
+.crm-shell { display: flex; flex: 1; min-height: 0; width: 100%; height: 100vh; height: 100dvh; overflow: hidden; background: #f7f8fa; color: #172e44; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.crm-shell *, .crm-shell *::before, .crm-shell *::after { box-sizing: border-box; }
+.crm-shell button { font: inherit; cursor: pointer; }
+.crm-shell button:focus-visible, .crm-shell [role="button"]:focus-visible, .crm-shell [role="tab"]:focus-visible, .crm-shell input:focus-visible, .crm-shell textarea:focus-visible { outline: 3px solid #ef9d55; outline-offset: 3px; }
+.crm-shell button:disabled { cursor: default; }
+.crm-sidebar { display: flex; flex-direction: column; width: 256px; flex-shrink: 0; padding: 34px 18px 20px; color: white; background: radial-gradient(ellipse at 0 100%, #123d56 0, transparent 58%), #0b2844; border-right: 1px solid #183b55; }
+.crm-brand { display: flex; align-items: center; gap: 11px; padding: 0 6px 33px; border: 0; background: none; color: white; text-align: left; }
+.crm-brand strong { display: block; font: 600 20px/1.25 Georgia, "Times New Roman", serif; letter-spacing: -.5px; white-space: nowrap; }
+.crm-brand small { display: block; margin-top: 8px; font-size: 10px; font-weight: 600; letter-spacing: 3px; color: #f4a263; }
+.crm-nav-caption { display: block; padding: 24px 16px 15px; border-top: 1px solid #ffffff13; color: #a0b5c6; font-size: 10px; letter-spacing: 1.6px; text-transform: uppercase; font-weight: 600; }
+.crm-desktop-nav { display: flex; flex-direction: column; gap: 7px; }
+.crm-nav-item { display: flex; align-items: center; gap: 13px; min-height: 48px; padding: 0 16px; border: 1px solid transparent; border-radius: 9px; text-align: left; background: transparent; color: #becdd9; font-size: 13px !important; font-weight: 500 !important; transition: background .15s, color .15s; }
+.crm-nav-item:hover { background: #ffffff09; color: white; }
+.crm-nav-item.is-active { color: white; background: #ffffff0e; border-color: #ffffff12; box-shadow: inset 3px 0 #f5821f; }
+.crm-active-dot { margin-left: auto; width: 5px; height: 5px; border-radius: 100%; background: #f5821f; }
+.crm-sidebar-bottom { margin-top: auto; padding-top: 36px; }
+.crm-workspace-label { display: flex; align-items: center; gap: 8px; padding: 16px 10px; font-size: 10px; color: #a4b9c9; }
+.crm-workspace-dot { height: 6px; width: 6px; border-radius: 50%; background: #f5821f; }
+.crm-account { display: flex; align-items: center; gap: 10px; width: 100%; padding: 16px 8px 2px; border: 0; border-top: 1px solid #ffffff18; background: none; color: white; text-align: left; }
+.crm-account-details { flex: 1; min-width: 0; }
+.crm-account-details strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 124px; font-size: 12px; font-weight: 600; }
+.crm-account-details small { display: block; margin-top: 5px; color: #9fb6c8; font-size: 10px; }
+.crm-avatar { display: inline-flex; flex-shrink: 0; width: 35px; height: 35px; align-items: center; justify-content: center; border: 1px solid #e1e7ed; border-radius: 50%; font-size: 11px; font-weight: 700; color: #0b2a4a; background: #edf2f6; }
+.crm-avatar-dark { width: 35px; height: 35px; background: #ffffff0d; color: #fff; border-color: #ffffff20; }
+.crm-workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.crm-topbar { min-height: 78px; display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 36px; background: #ffffff; border-bottom: 1px solid #e9edf1; }
+.crm-breadcrumb { display: flex; align-items: center; gap: 14px; font-size: 12px; color: #728091; }
+.crm-breadcrumb strong { color: #253d53; font-weight: 600; }.crm-breadcrumb-slash { color: #c1cbd3; }
+.crm-topbar-actions { display: flex; align-items: center; gap: 18px; }.crm-today { font-size: 11px; color: #728091; }.crm-topbar-divider { height: 24px; width: 1px; background: #e5eaef; }
+.crm-profile-button { display: flex; align-items: center; gap: 9px; border: 0; padding: 2px; background: none; color: #253d53; font-size: 12px !important; font-weight: 600 !important; }.crm-profile-name { max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
+.crm-icon-button { display: grid; place-items: center; width: 35px; height: 35px; border: 1px solid #e8ecf0; border-radius: 9px; background: white; }.crm-icon-button:hover { background: #f5f7fa; }
+.crm-page { display: flex; flex: 1; min-height: 0; min-width: 0; outline: 0; overflow: hidden; }
+.crm-page > div { min-width: 0; }
+.crm-mobile-nav, .crm-mobile-brand { display: none; }
+.crm-skip { position: absolute; left: 270px; top: -80px; z-index: 100; border-radius: 8px; background: #fff; color: #0b2a4a; padding: 12px 20px; }.crm-skip:focus { top: 16px; }
+.crm-shell ::-webkit-scrollbar { width: 6px; height: 6px; }.crm-shell ::-webkit-scrollbar-thumb { background: #cbd5df; border-radius: 10px; }.crm-shell ::-webkit-scrollbar-track { background: transparent; }
+@media (min-width: 1600px) { .crm-sidebar { width: 258px; }.crm-topbar { padding-left: 48px; padding-right: 48px; } }
+@media (max-width: 1023px) { .crm-sidebar { display: none; }.crm-topbar { min-height: 66px; padding: 12px 24px; }.crm-today { display: none; }.crm-topbar-divider { display: none; }.crm-mobile-nav { display: flex; flex-shrink: 0; justify-content: space-around; gap: 2px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid #e5eaf0; background: white; }.crm-mobile-nav button { display: flex; flex: 1; min-width: 0; align-items: center; justify-content: center; flex-direction: column; gap: 5px; padding: 9px 2px; border: 0; border-radius: 9px; background: none; color: #728091; font-size: 10px; }.crm-mobile-nav button.is-active { color: #0b2a4a; background: #fff2e7; }.crm-skip { left: 16px; } }
+@media (max-width: 600px) { .crm-breadcrumb { display: none; }.crm-mobile-brand { display: flex; align-items: center; gap: 8px; font: 600 17px Georgia, serif; color: #0b2a4a; }.crm-mobile-brand small { display: block; font: 600 8px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 2px; margin-top: 4px; color: #d56a11; }.crm-topbar { gap: 12px; padding: 11px 18px; }.crm-topbar-actions { gap: 10px; }.crm-profile-name { display: none; }.crm-profile-button > div { display: none; }.crm-mobile-nav { padding-left: 4px; padding-right: 4px; }.crm-mobile-nav button { font-size: 9px; } }
+@media (prefers-reduced-motion: reduce) { .crm-shell * { transition: none !important; scroll-behavior: auto !important; } }

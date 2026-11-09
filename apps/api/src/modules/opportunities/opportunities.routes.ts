@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
-import { requireAuth, AuthedRequest, opportunityScope, scopedOpportunity } from "../../middleware/authorize";
+import { requireAuth, AuthedRequest, opportunityScope, scopedOpportunity, scopedOrganization, noteScope, followupScope } from "../../middleware/authorize";
 import { transitionOpportunity, TransitionRejected } from "./transitionOpportunity";
 import {
   setProposalDeadline,
@@ -229,6 +229,7 @@ opportunitiesRouter.get("/:id", async (req: AuthedRequest, res) => {
       signingPartner: { select: { id: true, name: true, role: true } },
       createdBy: { select: { id: true, name: true } },
       notes: {
+        where: noteScope(req.user),
         include: { author: { select: { id: true, name: true } } },
         orderBy: { createdAt: "desc" },
       },
@@ -243,7 +244,7 @@ opportunitiesRouter.get("/:id", async (req: AuthedRequest, res) => {
         },
         orderBy: { changedAt: "desc" },
       },
-      followups: { orderBy: { dueAt: "asc" } },
+      followups: { where: followupScope(req.user), orderBy: { dueAt: "asc" } },
     },
   });
 
@@ -270,6 +271,10 @@ opportunitiesRouter.post("/", async (req: AuthedRequest, res) => {
       success: false,
       error: { code: "VALIDATION_ERROR", message: parsed.error.message },
     });
+  }
+
+  if (!await scopedOrganization(req.user, parsed.data.organizationId)) {
+    return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Organization not found." } });
   }
 
   // OTHER is the honest escape hatch in the source list, but only if the

@@ -49,8 +49,8 @@ const styles = StyleSheet.create({
   iconCircle: {
     width: 60,
     height: 60,
-    borderRadius: 30,
-    backgroundColor: tokens.color.brandSoft,
+    borderRadius: 19,
+    backgroundColor: tokens.color.accentSoft,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
@@ -68,6 +68,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 6,
     lineHeight: 19,
+    maxWidth: 380,
   },
 
   action: {

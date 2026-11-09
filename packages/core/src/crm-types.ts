@@ -108,6 +108,13 @@ export type Organization = {
   address?: string | null;
   description?: string | null;
   isExistingClient?: boolean;
+  assignedToId?: string | null;
+  assignedDepartmentId?: string | null;
+  assignedDepartment?: Pick<Department, "id" | "name"> | null;
+  assignedTo?: Pick<UserLite, "id" | "name" | "email" | "role"> | null;
+  assignedById?: string | null;
+  assignedBy?: Pick<UserLite, "id" | "name"> | null;
+  assignedAt?: string | null;
   sourceKey?: string | null;
   sourceData?: {
     kind: "PROSPECT" | "CUSTOMER";
@@ -244,16 +251,8 @@ export type UserLite = {
   role: Role;
   departmentId?: string | null;
   department?: Department | null;
-  /**
-   * The department this user runs, when they run one.
-   *
-   * Carried on the user rather than left for the client to join up from the
-   * department list, because the client mostly needs the answer in the other
-   * direction: when appointing somebody as a head, the question is whether
-   * they already head a department somewhere else. A person can only head one,
-   * so the answer decides whether the action is even legal.
-   */
-  headsDepartmentId?: string | null;
+  headedDepartments?: Pick<Department, "id" | "name">[];
+  assignedProspectCount?: number;
 };
 
 // Staff records via POST/PATCH /users — only Partner and Manager roles can
@@ -356,4 +355,11 @@ export type OpportunityDetail = Opportunity & {
   stageHistory?: StageHistoryEntry[];
   /** Newest first, matching stageHistory's ordering. */
   ownerChanges?: OwnerChange[];
+};
+
+export type DepartmentPerformance = {
+  member: Pick<UserLite, "id" | "name">;
+  personal: BreakdownRow;
+  combined: BreakdownRow;
+  departments: BreakdownRow[];
 };

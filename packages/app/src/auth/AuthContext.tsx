@@ -27,6 +27,7 @@ type AuthContextValue = {
   isAuthenticated: boolean;
   login: (credentials: LoginRequest) => Promise<void>;
   logout: () => void;
+  updateProfile: (user: AuthUser) => void;
 };
 
 const AuthContext =
@@ -65,6 +66,24 @@ export function AuthProvider({
     setSession(null);
   }
 
+  function updateProfile(updated: AuthUser) {
+    setSession(current => {
+      if (!current || current.user.id !== updated.id) return current;
+      const next = { ...current, user: updated };
+      saveSession(next);
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    apiFetch<AuthUser>("/users/me", token).then(profile => {
+      if (active) updateProfile(profile);
+    }).catch(() => { /* The next screen request displays connection failures. */ });
+    return () => { active = false; };
+  }, [token]);
+
   // Any request that comes back 401 (expired or revoked token) logs the user
   // out, so a dead session surfaces as the login screen rather than errors on
   // every screen. Registered once; re-registered if logout changes identity.
@@ -81,6 +100,7 @@ export function AuthProvider({
       isAuthenticated: Boolean(token),
       login,
       logout,
+      updateProfile,
     }),
     [token, user]
   );

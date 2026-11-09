@@ -1,3 +1,5 @@
+import { MemberEditSheet } from "../components/MemberEditSheet";
+import { DepartmentPerformancePanel } from "../components/DepartmentPerformancePanel";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -165,7 +167,7 @@ export function TeamScreen() {
         ].toLowerCase()}.`;
 
   return (
-    <Screen>
+    <Screen scroll={false}>
       <ScrollView
         refreshControl={
           <RefreshControl
@@ -270,26 +272,19 @@ export function TeamScreen() {
                   rows.map((row) => {
                     const user =
                       staff.find((member) => member.id === row.id) ?? null;
-                    // Naming the department somebody runs, not just belongs to.
-                    // Membership and command are separate facts, and a reader
-                    // scanning this list needs to know which is which — an
-                    // unstated "Head of Tax" is the fact the whole ownership
-                    // model rests on.
-                    const headsName =
-                      user?.headsDepartmentId != null
-                        ? (departments.find(
-                            (dept) => dept.id === user.headsDepartmentId
-                          )?.name ?? null)
-                        : null;
+                    const headsName = user?.headedDepartments?.map(d => d.name).join(", ") || null;
                     return (
                       <MemberCard
                         key={row.id}
+                        member={user}
+                        period={period}
                         name={row.name}
                         subtitle={user ? ROLE_LABELS[user.role] : null}
                         departmentName={
                           row.subtitle ?? user?.department?.name ?? null
                         }
                         headsDepartmentName={headsName}
+                        assignedProspectCount={user?.assignedProspectCount ?? 0}
                         departments={departments}
                         row={row}
                         onChanged={reloadAfterChange}
@@ -467,6 +462,9 @@ function BreakdownBody({ row }: BreakdownCardProps) {
 }
 
 type MemberCardProps = {
+  member: StaffUser | null;
+  period: ReportPeriod;
+  assignedProspectCount: number;
   name: string;
   subtitle: string | null;
   departmentName: string | null;
@@ -478,6 +476,9 @@ type MemberCardProps = {
 };
 
 function MemberCard({
+  member,
+  period,
+  assignedProspectCount,
   name,
   subtitle,
   departmentName,
@@ -489,6 +490,7 @@ function MemberCard({
   const { token } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const roleLine = subtitle ?? "Staff member";
   const deptLine = departmentName ?? "No department";
@@ -515,6 +517,7 @@ function MemberCard({
 
   return (
     <Card style={styles.memberCard}>
+      {editing && member && <MemberEditSheet member={member} departments={departments} onClose={() => setEditing(false)} onSaved={onChanged} />}
       <Pressable
         onPress={() => setExpanded((open) => !open)}
         style={styles.memberHeader}
@@ -530,8 +533,9 @@ function MemberCard({
           <Text style={styles.memberMeta} numberOfLines={1}>
             {roleLine} · {deptLine}
           </Text>
+          <Text style={styles.headBadge}>Assigned prospects: {assignedProspectCount}</Text>
           {headsDepartmentName ? (
-            <Text style={styles.headBadge} numberOfLines={1}>
+            <Text style={styles.headBadge}>
               Head of {headsDepartmentName}
             </Text>
           ) : null}
@@ -544,6 +548,7 @@ function MemberCard({
         />
       </Pressable>
 
+      {member && <Pressable onPress={() => setEditing(true)} accessibilityRole="button" style={{ paddingVertical: 10, alignSelf: "flex-start" }}><Text style={styles.actionText}>Edit member</Text></Pressable>}
       <BreakdownBody row={row} />
 
       <View style={styles.valueRow}>
@@ -560,6 +565,7 @@ function MemberCard({
 
       {expanded ? (
         <View style={styles.expandArea}>
+          {!!member?.headedDepartments?.length && <DepartmentPerformancePanel key={`${member.id}:${member.departmentId}:${member.headedDepartments.map(d => d.id).join(",")}`} memberId={member.id} query={`?period=${period}`} money={formatAmount} />}
           <Text style={styles.expandLabel}>Move to department</Text>
           <View style={styles.chipWrap}>
             <Chip
@@ -619,21 +625,7 @@ function DepartmentCard({
   const headId = department.headId ?? null;
   const headName = department.head?.name ?? null;
 
-  // Only members of this department can lead it. The server refuses anybody
-  // else, so offering them here would produce a picker that looks reasonable
-  // and then fails — the worst of both.
-  const candidates = members.filter(
-    (member) => member.departmentId === department.id
-  );
-
-  // A person can lead only one department, so somebody already heading another
-  // one is shown struck through rather than hidden. Removing them would make
-  // the constraint invisible, and "why isn't Grace an option?" is the question
-  // this picker exists to answer.
-  const runsElsewhere = (member: StaffUser) =>
-    member.headsDepartmentId !== null &&
-    member.headsDepartmentId !== undefined &&
-    member.headsDepartmentId !== department.id;
+  const candidates = members.filter(member => member.role === "PARTNER" || member.departmentId === department.id);
 
   async function appoint(nextHeadId: string | null) {
     if (!token || nextHeadId === headId) return;
@@ -706,19 +698,16 @@ function DepartmentCard({
             <Chip
               label="No head"
               selected={headId === null}
+              disabled={busy}
               onPress={() => appoint(null)}
             />
 
             {candidates.map((member) => (
               <Chip
                 key={member.id}
-                label={
-                  runsElsewhere(member)
-                    ? `${member.name} — runs another`
-                    : member.name
-                }
+                label={member.name}
                 selected={headId === member.id}
-                disabled={runsElsewhere(member)}
+                disabled={busy}
                 onPress={() => appoint(member.id)}
               />
             ))}
@@ -726,8 +715,7 @@ function DepartmentCard({
 
           {candidates.length === 0 ? (
             <Text style={styles.emptyHint}>
-              No Partners or Managers in this department yet — add members to
-              it first.
+              Add a Partner, or a Manager whose primary department is this one.
             </Text>
           ) : null}
 
@@ -765,6 +753,7 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<"PARTNER" | "MANAGER">("PARTNER");
   const [departmentId, setDepartmentId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -793,7 +782,7 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
           name: name.trim(),
           email: email.trim(),
           role,
-          password: password.trim(),
+          password,
           ...(departmentId ? { departmentId } : {}),
         }),
       });
@@ -834,7 +823,19 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
         placeholder="At least 8 characters"
         autoCapitalize="none"
         autoCorrect={false}
-        secureTextEntry
+        secureTextEntry={!showPassword}
+        autoComplete="new-password"
+        right={
+          <Pressable
+            onPress={() => setShowPassword((visible) => !visible)}
+            accessibilityRole="button"
+            accessibilityLabel={showPassword ? "Hide initial password" : "Show initial password"}
+            hitSlop={8}
+            style={{ padding: 8 }}
+          >
+            <Icon name={showPassword ? IconSet.EyeOff : IconSet.Eye} size={20} color={tokens.color.inkMuted} />
+          </Pressable>
+        }
       />
       <Text style={styles.formHint}>
         Set an initial password of at least 8 characters, then tell the new
@@ -990,9 +991,9 @@ const styles = StyleSheet.create({
   },
 
   statItem: {
-    borderRadius: 12,
-    padding: 12,
-    gap: 2,
+    borderRadius: 14,
+    padding: 18,
+    gap: 5,
   },
 
   statLabel: {
@@ -1002,9 +1003,9 @@ const styles = StyleSheet.create({
   },
 
   statCount: {
-    ...tokens.type.h3,
-    color: tokens.color.ink,
-    fontWeight: "800",
+    fontSize: 24,
+    color: tokens.color.brand,
+    fontWeight: "600",
   },
 
   statValue: {
@@ -1013,7 +1014,7 @@ const styles = StyleSheet.create({
   },
 
   memberCard: {
-    padding: 14,
+    padding: 20,
   },
 
   memberHeader: {
@@ -1048,8 +1049,8 @@ const styles = StyleSheet.create({
 
   memberName: {
     ...tokens.type.bodyStrong,
-    fontSize: 17,
-    color: tokens.color.ink,
+    fontSize: 16,
+    color: tokens.color.brand,
   },
 
   memberMeta: {
@@ -1131,7 +1132,9 @@ const styles = StyleSheet.create({
   },
 
   formCard: {
-    padding: 16,
+    padding: 24,
+    maxWidth: 760,
+    width: "100%",
     marginBottom: 16,
   },
 

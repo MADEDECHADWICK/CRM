@@ -1,3 +1,4 @@
+import { DepartmentPerformancePanel } from "../components/DepartmentPerformancePanel";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
@@ -119,17 +120,17 @@ function ReportSection({ title, path, headers, toCells, token, reloadKey, contro
         ) : rows.length === 0 ? (
           <Text style={styles.empty}>No data for this period.</Text>
         ) : (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <ScrollView horizontal showsHorizontalScrollIndicator>
             <View>
               <View style={[styles.tr, styles.thead]}>
                 {headers.map((h) => (
-                  <Text key={h} style={styles.th}>{h}</Text>
+                  <Text key={h} style={[styles.th, h === headers[0] && styles.firstCell]}>{h}</Text>
                 ))}
               </View>
               {rows.map((row, i) => (
-                <View key={i} style={styles.tr}>
+                <View key={i} style={[styles.tr, i % 2 === 1 && styles.alternateRow]}>
                   {toCells(row).map((cell, j) => (
-                    <Text key={j} style={styles.td}>{String(cell)}</Text>
+                    <Text key={j} style={[styles.td, j === 0 && styles.firstCell]}>{String(cell)}</Text>
                   ))}
                 </View>
               ))}
@@ -203,7 +204,8 @@ function endOfDay(d: Date): Date {
 }
 
 export function ReportsScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const [category, setCategory] = useState<"overview" | "clients" | "pipeline">("overview");
   const [period, setPeriod] = useState<ReportPeriod>("month");
   const [groupBy, setGroupBy] = useState<ScorecardDimension>("department");
   const [from, setFrom] = useState<Date | null>(null);
@@ -233,7 +235,7 @@ export function ReportsScreen() {
   const num = (v: unknown) => formatAmount(Math.round((v as number) / rate), displayCurrency);
 
   return (
-    <Screen>
+    <Screen scroll={false}>
       <ScrollView
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={tokens.color.brand} />
@@ -241,24 +243,25 @@ export function ReportsScreen() {
       >
         <AppHeader icon={IconSet.Chart} title="Reports" subtitle={`Management reporting — ${displayCurrency}`} />
 
-        <Segmented
-          value={period}
-          onChange={(key) => setPeriod(key)}
-          options={PERIODS.map((key) => ({ key, label: REPORT_PERIOD_LABELS[key] }))}
-        />
-
-        {period === "custom" ? (
-          <Card>
-            <DateField label="From" value={from} onChange={setFrom} maximumDate={to ?? new Date()} />
-            <DateField label="To" value={to} onChange={setTo} minimumDate={from ?? undefined} maximumDate={new Date()} />
-          </Card>
-        ) : null}
-
-        <Segmented
-          value={displayCurrency}
-          onChange={(key) => setDisplayCurrency(key)}
-          options={REPORT_CURRENCIES.map((code) => ({ key: code, label: code }))}
-        />
+        <Card style={styles.filterCard}>
+          <View style={styles.filterRow}>
+            <View style={styles.periodFilter}>
+              <Text style={styles.filterLabel}>Reporting period</Text>
+              <Segmented value={period} onChange={setPeriod} options={PERIODS.map(key => ({ key, label: REPORT_PERIOD_LABELS[key] }))} />
+            </View>
+            <View style={styles.currencyFilter}>
+              <Text style={styles.filterLabel}>Display currency</Text>
+              <Segmented value={displayCurrency} onChange={setDisplayCurrency} options={REPORT_CURRENCIES.map(code => ({ key: code, label: code }))} />
+            </View>
+          </View>
+          {period === "custom" && <View style={styles.filterRow}>
+            <View style={styles.currencyFilter}><DateField label="From" value={from} onChange={setFrom} maximumDate={to ?? new Date()} /></View>
+            <View style={styles.currencyFilter}><DateField label="To" value={to} onChange={setTo} minimumDate={from ?? undefined} maximumDate={new Date()} /></View>
+          </View>}
+        </Card>
+        <View style={styles.reportTabs}>
+          <Segmented value={category} onChange={setCategory} options={[{ key: "overview", label: "Overview" }, { key: "clients", label: "Client insights" }, { key: "pipeline", label: "Pipeline & activity" }]} />
+        </View>
 
         {q === null ? (
           <Card>
@@ -266,6 +269,8 @@ export function ReportsScreen() {
           </Card>
         ) : (
           <>
+        {category === "overview" && <>
+        {user?.role !== "MARKETING_BD" && <DepartmentPerformancePanel query={q} reloadKey={reloadKey} money={num} />}
         <ReportSection
           title="Performance scorecard"
           path={`/reporting/scorecard${q}&groupBy=${groupBy}`}
@@ -299,6 +304,8 @@ export function ReportsScreen() {
           toItem={(r) => ({ label: String(r.label), value: r.quoted as number, caption: num(r.quoted) })}
         />
 
+        </>}
+        {category === "clients" && <>
         <ReportChart
           title="Customer acquisition"
           path={`/reporting/acquisition${q}`}
@@ -329,6 +336,17 @@ export function ReportsScreen() {
         />
 
         <ReportSection
+          title="Client priorities"
+          path={`/reporting/client-priorities${q}`}
+          token={token}
+          reloadKey={reloadKey}
+          headers={["Client", "Country", "Booked"]}
+          toCells={(r) => [String(r.name), String(r.country ?? "Unspecified"), num(r.booked)]}
+        />
+
+        </>}
+        {category === "pipeline" && <>
+        <ReportSection
           title="Lead sources"
           path={`/reporting/sources${q}`}
           token={token}
@@ -345,15 +363,6 @@ export function ReportsScreen() {
           headers={["Client", "Country", "Service", "Department", "Stage", "Amount", "Owner", "Submitted"]}
           toCells={(r) => [String(r.client), String(r.country), String(r.service), String(r.department), String(r.stage), num(r.amount), String(r.owner), String(r.submitted)]}
           note="Prequalifications are reported separately from RFP/RFQ tenders."
-        />
-
-        <ReportSection
-          title="Client priorities"
-          path={`/reporting/client-priorities${q}`}
-          token={token}
-          reloadKey={reloadKey}
-          headers={["Client", "Country", "Booked"]}
-          toCells={(r) => [String(r.name), String(r.country ?? "Unspecified"), num(r.booked)]}
         />
 
         <ReportSection
@@ -390,6 +399,7 @@ export function ReportsScreen() {
           toCells={(r) => [String(r.client), String(r.country), String(r.service), String(r.source), String(r.received), String(r.stage), num(r.amount), String(r.owner)]}
           note="Download CSV/Word for every lead column."
         />
+        </>}
           </>
         )}
       </ScrollView>
@@ -398,26 +408,34 @@ export function ReportsScreen() {
 }
 
 const styles = StyleSheet.create({
-  downloadRow: { flexDirection: "row", gap: 14 },
-  download: { ...tokens.type.caption, color: tokens.color.brand, fontWeight: "700" },
+  filterCard: { marginBottom: 22 },
+  filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 20 },
+  periodFilter: { flex: 2, minWidth: 240 },
+  currencyFilter: { flex: 1, minWidth: 200 },
+  filterLabel: { ...tokens.type.caption, color: tokens.color.inkMuted, marginBottom: 10 },
+  reportTabs: { marginBottom: 12 },
+  firstCell: { minWidth: 190, color: tokens.color.brand },
+  alternateRow: { backgroundColor: tokens.color.brandFaint },
+  downloadRow: { flexDirection: "row", gap: 8 },
+  download: { ...tokens.type.caption, color: tokens.color.brand, fontWeight: "600", paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1, borderColor: tokens.color.border, borderRadius: 7, backgroundColor: tokens.color.surface },
   controls: { marginBottom: 12 },
   tr: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: tokens.color.border },
-  thead: { borderBottomWidth: 2 },
+  thead: { backgroundColor: tokens.color.brandSoft, borderBottomWidth: 1 },
   th: {
     ...tokens.type.micro,
     letterSpacing: 0,
     fontWeight: "800",
     color: tokens.color.ink,
-    minWidth: 110,
-    paddingVertical: 8,
-    paddingRight: 12,
+    minWidth: 120,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
   },
   td: {
     ...tokens.type.caption,
     color: tokens.color.inkMuted,
-    minWidth: 110,
-    paddingVertical: 8,
-    paddingRight: 12,
+    minWidth: 120,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
   },
   error: { ...tokens.type.caption, color: tokens.color.danger },
   empty: { ...tokens.type.caption, color: tokens.color.inkMuted },

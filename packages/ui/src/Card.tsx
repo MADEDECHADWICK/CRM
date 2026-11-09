@@ -51,12 +51,12 @@ export function Card({ children, onPress, style, onLayout }: CardProps) {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: tokens.color.surface,
-    borderRadius: tokens.radius.md,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: tokens.color.border,
-    padding: 16,
-    marginBottom: 12,
-    ...tokens.shadow.hairline,
+    padding: 20,
+    marginBottom: 14,
+    ...tokens.shadow.card,
   },
 
   pressed: {

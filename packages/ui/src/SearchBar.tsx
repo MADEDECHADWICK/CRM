@@ -2,6 +2,7 @@
 //
 // A rounded search field with a magnifier glyph and a one-tap clear.
 
+import { useState } from "react";
 import { Pressable, StyleSheet, TextInput, View } from "react-native";
 
 import { tokens } from "@crm/core";
@@ -21,8 +22,9 @@ export function SearchBar({
   placeholder = "Search",
   autoFocus = false,
 }: SearchBarProps) {
+  const [focused, setFocused] = useState(false);
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, focused && { borderColor: tokens.color.brand }]}>
       <Icon
         name={IconSet.Search}
         size={18}
@@ -31,6 +33,9 @@ export function SearchBar({
 
       <TextInput
         style={styles.input}
+        accessibilityLabel={placeholder}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
@@ -67,13 +72,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: tokens.color.border,
     borderRadius: tokens.radius.sm,
-    paddingHorizontal: 14,
-    minHeight: 46,
-    ...tokens.shadow.hairline,
+    paddingHorizontal: 18,
+    minHeight: 52,
   },
 
   input: {
     flex: 1,
+    minWidth: 0,
     ...tokens.type.body,
     color: tokens.color.ink,
     paddingVertical: 0,

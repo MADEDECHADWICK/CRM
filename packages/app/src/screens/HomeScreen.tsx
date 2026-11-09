@@ -1,6 +1,10 @@
+import { MemberEditSheet } from "../components/MemberEditSheet";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Pressable,
+  Platform,
+  useWindowDimensions,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -12,11 +16,13 @@ import {
   type Contact,
   type Opportunity,
   type ReportingSummary,
+  formatAmount,
   tokens,
 } from "@crm/core";
 
 import {
   Card,
+  Button,
   EmptyState,
   Icon,
   IconButton,
@@ -55,10 +61,14 @@ function initials(name: string): string {
 type HomeScreenProps = {
   /** Jump to a client on the Prospects screen (their contact list). */
   onOpenClient?: (organizationId: string) => void;
+  onNavigate?: (screen: "PROSPECTS" | "CLIENTS" | "PIPELINE" | "FOLLOWUPS" | "REPORTS") => void;
 };
 
-export function HomeScreen({ onOpenClient }: HomeScreenProps) {
+export function HomeScreen({ onOpenClient, onNavigate }: HomeScreenProps) {
   const { token, user, logout } = useAuth();
+  const { width } = useWindowDimensions();
+  const wide = width >= 1180;
+  const [editingProfile, setEditingProfile] = useState(false);
 
   function confirmSignOut() {
     Alert.alert(
@@ -178,7 +188,8 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
   });
 
   return (
-    <Screen>
+    <Screen scroll={false}>
+      {editingProfile && <MemberEditSheet onClose={() => setEditingProfile(false)} />}
       <ScrollView
         refreshControl={
           <RefreshControl
@@ -190,17 +201,18 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
       >
         <PageHero
           icon={IconSet.Check}
-          iconColor={tokens.color.onBrand}
-          tint={tokens.color.accent}
+          iconColor={tokens.color.accentStrong}
+          tint={tokens.color.accentSoft}
           title={`${greetingForHour(new Date().getHours())}, ${firstName}.`}
           subtitle={today}
-          right={
+          right={Platform.OS !== "web" ?
             <View style={styles.headerActions}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {initials(user?.name ?? "")}
-                </Text>
-              </View>
+              <Pressable onPress={() => setEditingProfile(true)} accessibilityRole="button" accessibilityLabel="Edit my profile" style={{ alignItems: "center", gap: 3 }}>
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{initials(user?.name ?? "")}</Text>
+                </View>
+                <Text style={{ fontSize: 11, fontWeight: "600", color: tokens.color.brand }}>My profile</Text>
+              </Pressable>
 
               <IconButton
                 name={IconSet.Logout}
@@ -209,13 +221,14 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
                 color={tokens.color.danger}
                 bg={tokens.color.dangerSoft}
               />
-            </View>
+            </View> : undefined
           }
         />
 
         <View style={styles.stats}>
-          <View style={styles.statItem}>
+          <View style={[styles.statItem, wide && { width: "25%" }]}>
             <StatCard
+              sub="Organizations on file"
               label="Prospects"
               value={summary.totalProspects}
               icon={IconSet.People}
@@ -224,8 +237,9 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
             />
           </View>
 
-          <View style={styles.statItem}>
+          <View style={[styles.statItem, wide && { width: "25%" }]}>
             <StatCard
+              sub="Lead opportunities"
               label="Leads"
               value={summary.totalLeads}
               icon={IconSet.Pipeline}
@@ -234,8 +248,9 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
             />
           </View>
 
-          <View style={styles.statItem}>
+          <View style={[styles.statItem, wide && { width: "25%" }]}>
             <StatCard
+              sub="Proposals in preparation"
               label="Proposals"
               value={summary.totalProposals}
               icon={IconSet.Doc}
@@ -244,8 +259,9 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
             />
           </View>
 
-          <View style={styles.statItem}>
+          <View style={[styles.statItem, wide && { width: "25%" }]}>
             <StatCard
+              sub="Customer accounts"
               label="Clients"
               value={summary.totalClients}
               icon={IconSet.Check}
@@ -255,15 +271,33 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
           </View>
         </View>
 
-        <Section title="Pipeline snapshot" />
-
-        <Card>
-          <DonutChart
-            data={pipelineDonut(pipeline.counts)}
-            centerValue={`${pipeline.total}`}
-            centerCaption="opportunities"
-          />
-        </Card>
+        <View style={[styles.dashboardGrid, wide && { flexDirection: "row" }]}>
+          <View style={styles.dashboardColumn}>
+            <Section title="Pipeline overview" action={<Pressable onPress={() => onNavigate?.("PIPELINE")} accessibilityRole="button"><Text style={styles.dashboardLink}>View pipeline</Text></Pressable>} />
+            <Card style={styles.pipelineCard}>
+              {pipeline.total > 0 ? <DonutChart data={pipelineDonut(pipeline.counts)} centerValue={`${pipeline.total}`} centerCaption="opportunities" /> : <EmptyState icon={IconSet.Pipeline} title="No opportunities yet" subtitle="Deals will appear here as they move through your pipeline." action={<Button title="Open pipeline" icon={IconSet.ChevronRight} variant="secondary" size="sm" onPress={() => onNavigate?.("PIPELINE")} />} />}
+              <View style={styles.pipelineFooter}>
+                <View><Text style={styles.smallLabel}>Won value</Text><Text style={styles.pipelineAmount}>{formatAmount(summary.wonValue)}</Text></View>
+                <View><Text style={styles.smallLabel}>Active proposals</Text><Text style={styles.pipelineAmount}>{formatAmount(summary.activeProposalValue)}</Text></View>
+              </View>
+            </Card>
+          </View>
+          <View style={styles.dashboardColumn}>
+            <Section title="Your workspace" />
+            <Card style={styles.quickActions}>
+              {([
+                { screen: "PROSPECTS", title: "Explore prospects", description: "Browse organizations and manage assignments", icon: IconSet.People },
+                { screen: "CLIENTS", title: "Manage clients", description: "Keep your client accounts and contacts up to date", icon: IconSet.Building },
+                { screen: "FOLLOWUPS", title: "Plan your follow-ups", description: "Review scheduled calls, emails and meetings", icon: IconSet.Calendar },
+                { screen: "REPORTS", title: "Review performance", description: "See results across your team and departments", icon: IconSet.Chart },
+              ] as const).map((action, index) => <Pressable key={action.screen} accessibilityRole="button" onPress={() => onNavigate?.(action.screen)} style={({ pressed }) => [styles.quickAction, index > 0 && styles.quickActionBorder, pressed && { backgroundColor: tokens.color.brandFaint }]}>
+                <View style={styles.quickIcon}><Icon name={action.icon} size={20} color={tokens.color.brand} /></View>
+                <View style={{ flex: 1, gap: 5 }}><Text style={styles.quickTitle}>{action.title}</Text><Text style={styles.quickDescription}>{action.description}</Text></View>
+                <Icon name={IconSet.ChevronRight} size={16} color={tokens.color.inkFaint} />
+              </Pressable>)}
+            </Card>
+          </View>
+        </View>
 
         <Section
           title="Client contact information"
@@ -392,6 +426,19 @@ export function HomeScreen({ onOpenClient }: HomeScreenProps) {
 }
 
 const styles = StyleSheet.create({
+  dashboardGrid: { gap: 22 },
+  dashboardColumn: { flex: 1, minWidth: 0 },
+  dashboardLink: { ...tokens.type.caption, color: tokens.color.brand, fontWeight: "600" },
+  pipelineCard: { flex: 1, minHeight: 345, justifyContent: "space-between" },
+  pipelineFooter: { flexDirection: "row", gap: 32, borderTopWidth: 1, borderColor: tokens.color.border, paddingTop: 18, marginTop: 12 },
+  smallLabel: { ...tokens.type.caption, color: tokens.color.inkMuted, marginBottom: 7 },
+  pipelineAmount: { fontSize: 19, fontWeight: "600", color: tokens.color.brand },
+  quickActions: { flex: 1, paddingVertical: 4, paddingHorizontal: 20 },
+  quickAction: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 21 },
+  quickActionBorder: { borderTopWidth: 1, borderColor: tokens.color.border },
+  quickIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: tokens.color.brandFaint, alignItems: "center", justifyContent: "center" },
+  quickTitle: { fontSize: 14, fontWeight: "600", color: tokens.color.brand },
+  quickDescription: { fontSize: 12, lineHeight: 17, color: tokens.color.inkMuted },
   content: {
     paddingHorizontal: 20,
     paddingBottom: 32,

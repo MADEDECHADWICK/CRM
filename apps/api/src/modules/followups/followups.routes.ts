@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
-import { requireAuth, AuthedRequest, scopedOpportunity } from "../../middleware/authorize";
+import { requireAuth, AuthedRequest, scopedOpportunity, scopedOrganization, followupScope } from "../../middleware/authorize";
 import { createFollowup, deleteFollowup, completeFollowup } from "./followupActions";
 import { paginationSchema, pageOf } from "../../lib/pagination";
 
@@ -34,9 +34,7 @@ followupsRouter.get("/", async (req: AuthedRequest, res) => {
     }
 
     const followups = await prisma.followup.findMany({
-      where: {
-        OR: [{ assignedToId: req.user!.id }, { createdById: req.user!.id }],
-      },
+      where: followupScope(req.user),
       include: {
         opportunity: { include: { organization: true } },
         organization: true,
@@ -77,6 +75,10 @@ followupsRouter.post("/", async (req: AuthedRequest, res) => {
     }
   }
 
+  if (parsed.data.organizationId && !await scopedOrganization(req.user, parsed.data.organizationId)) {
+    return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Organization not found." } });
+  }
+
   try {
     const followup = await createFollowup({
       note: parsed.data.note,
@@ -103,7 +105,7 @@ followupsRouter.patch("/:id", async (req: AuthedRequest, res) => {
   }
 
   try {
-    const followup = await completeFollowup(params.data.id, req.user!.id);
+    const followup = await completeFollowup(params.data.id, req.user!);
     res.json({ success: true, data: followup });
   } catch (err: any) {
     res.status(400).json({ success: false, error: { code: "FOLLOWUP_REJECTED", message: err.message } });
@@ -120,7 +122,7 @@ followupsRouter.delete("/:id", async (req: AuthedRequest, res) => {
   }
 
   try {
-    await deleteFollowup(params.data.id, req.user!.id);
+    await deleteFollowup(params.data.id, req.user!);
     res.json({ success: true, data: null });
   } catch (err: any) {
     res.status(400).json({ success: false, error: { code: "FOLLOWUP_REJECTED", message: err.message } });

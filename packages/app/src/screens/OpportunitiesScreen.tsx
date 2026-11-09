@@ -240,7 +240,7 @@ export function OpportunitiesScreen() {
   }
 
   return (
-    <Screen>
+    <Screen scroll={false}>
       <ScrollView
         refreshControl={
           <RefreshControl
@@ -256,11 +256,10 @@ export function OpportunitiesScreen() {
           subtitle="Every opportunity, end to end"
           right={
             isBD ? (
-              <IconButton
-                name={showAddForm ? IconSet.Close : IconSet.Add}
-                label={showAddForm ? "Close deal form" : "Add deal"}
-                color={tokens.color.brand}
-                bg={tokens.color.brandSoft}
+              <Button
+                icon={showAddForm ? IconSet.Close : IconSet.Add}
+                title={showAddForm ? "Close form" : "Add deal"}
+                size="sm"
                 onPress={() => setShowAddForm((open) => !open)}
               />
             ) : undefined
@@ -1156,7 +1155,7 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
     new Date(detail.breachNoteDueAt).getTime() < Date.now();
 
   return (
-    <Screen>
+    <Screen scroll={false}>
       <ScrollView
         contentContainerStyle={styles.detailContent}
       >

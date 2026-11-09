@@ -282,7 +282,7 @@ export function FollowupsScreen() {
       : followups.filter((item) => item.status === "COMPLETED");
 
   return (
-    <Screen>
+    <Screen scroll={false}>
       <ScrollView
         refreshControl={
           <RefreshControl
@@ -301,11 +301,10 @@ export function FollowupsScreen() {
               : "Nothing due right now"
           }
           right={
-            <IconButton
-              name={IconSet.Add}
-              label="New follow-up"
-              color={tokens.color.white}
-              bg={tokens.color.brand}
+            <Button
+              icon={showCreate ? IconSet.Close : IconSet.Add}
+              title={showCreate ? "Close form" : "New follow-up"}
+              size="sm"
               onPress={() => setShowCreate((value) => !value)}
             />
           }

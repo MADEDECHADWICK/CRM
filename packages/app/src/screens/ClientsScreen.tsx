@@ -15,6 +15,7 @@ import {
   type Contact,
   type Organization,
   tokens,
+  canManageStaff,
 } from "@crm/core";
 
 import {
@@ -37,6 +38,7 @@ import { ContactFormSheet } from "../components/ContactFormSheet";
 import { useDirectoryPage } from "../components/useDirectoryPage";
 import { DirectoryPager } from "../components/DirectoryPager";
 import { OrganizationSourceDetails } from "../components/OrganizationSourceDetails";
+import { AccountAssignmentSheet } from "../components/AccountAssignmentSheet";
 
 type WonJob = {
   id: string;
@@ -74,7 +76,9 @@ function fmtDate(iso: string | null | undefined): string {
 }
 
 export function ClientsScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const canManage = !!user && canManageStaff(user.role);
+  const [assignmentOrg, setAssignmentOrg] = useState<Organization | null>(null);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -154,7 +158,7 @@ export function ClientsScreen() {
       <AppHeader
         icon={IconSet.Building}
         title="Clients"
-        subtitle="Customer directory and accounts with won work"
+        subtitle={canManage ? "Customer directory and accounts with won work" : "Clients assigned to you or your department"}
       />
 
       <View style={styles.stats}>
@@ -175,11 +179,11 @@ export function ClientsScreen() {
       {filtered.length === 0 ? (
         <EmptyState
           icon={IconSet.Building}
-          title={clients.length === 0 ? "No clients yet" : "Nothing matches"}
+          title={query.trim() ? "Nothing matches" : canManage ? "No clients yet" : "No assigned clients"}
           subtitle={
-            clients.length === 0
-              ? "Your imported customer records and organizations with won work appear here."
-              : "Try a different name, number or country."
+            query.trim() ? "Try a different name, number or country."
+              : canManage ? "Your imported customer records and organizations with won work appear here."
+              : "Clients assigned to you or your department appear here. Ask your administrator to assign an account."
           }
         />
       ) : (
@@ -199,7 +203,7 @@ export function ClientsScreen() {
                   </View>
 
                   <View style={styles.textCol}>
-                    <Text style={styles.name} numberOfLines={1}>
+                    <Text style={styles.name} numberOfLines={2}>
                       {client.name}
                     </Text>
                     <View style={styles.badgeRow}>
@@ -226,6 +230,11 @@ export function ClientsScreen() {
                   />
                 </View>
               </Pressable>
+
+              <View style={styles.assignmentRow}>
+                <Text style={styles.assignmentText}>{[client.assignedTo ? `Assigned to ${client.assignedTo.name}` : null, client.assignedDepartment?.name].filter(Boolean).join(" · ") || "Unassigned"}</Text>
+                {canManage && <Button title={client.assignedToId || client.assignedDepartmentId ? "Reassign" : "Assign"} icon={IconSet.Person} variant="secondary" size="sm" onPress={() => setAssignmentOrg(client)} />}
+              </View>
 
               {expanded ? (
                 <View style={styles.detail}>
@@ -321,6 +330,8 @@ export function ClientsScreen() {
         })
       )}
 
+      {assignmentOrg && canManage && <AccountAssignmentSheet kind="client" token={token ?? ""} organization={assignmentOrg} onClose={() => setAssignmentOrg(null)} onSaved={load} />}
+
       {clientFormOrg ? (
         <OrgFormSheet
           visible={clientFormOrg !== null}
@@ -350,7 +361,9 @@ const styles = StyleSheet.create({
   stats: { flexDirection: "row", gap: 12, marginBottom: 16 },
   statItem: { flex: 1 },
   searchWrap: { marginBottom: 16 },
-  clientCard: { padding: 14 },
+  clientCard: { padding: 20 },
+  assignmentRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: tokens.color.border },
+  assignmentText: { ...tokens.type.caption, color: tokens.color.inkMuted, fontWeight: "500", flex: 1, minWidth: 0 },
   header: { flexDirection: "row", alignItems: "center", gap: 12 },
   avatar: {
     width: 46,
@@ -362,7 +375,7 @@ const styles = StyleSheet.create({
   },
   avatarText: { ...tokens.type.bodyStrong, fontWeight: "800", color: tokens.color.onBrand },
   textCol: { flex: 1, gap: 5 },
-  name: { ...tokens.type.bodyStrong, fontSize: 17, color: tokens.color.ink },
+  name: { ...tokens.type.bodyStrong, fontSize: 16, color: tokens.color.brand },
   badgeRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   numberChip: {
     backgroundColor: tokens.color.accentSoft,

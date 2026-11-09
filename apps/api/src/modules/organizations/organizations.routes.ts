@@ -1,9 +1,12 @@
+import { accessibleDepartmentIds } from "../../lib/accessScope";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
-import { requireAuth, AuthedRequest, opportunityScope } from "../../middleware/authorize";
+import { requireAuth, AuthedRequest, opportunityScope, organizationScope } from "../../middleware/authorize";
 import { paginationSchema, pageOf } from "../../lib/pagination";
 import { directorySearch, prospectDirectoryWhere } from "../../lib/organizationViews";
+import { canCreateProspect } from "@crm/core";
+import { assignmentInclude, assignAccount, createProspect, ProspectError } from "./prospectActions";
 
 export const organizationsRouter = Router();
 organizationsRouter.use(requireAuth);
@@ -17,21 +20,23 @@ const nullableText = z
   .optional();
 
 const createSchema = z.object({
-  name: z.string().min(1),
-  industry: z.string().min(1),
-  phone: z.string().optional(),
-  email: z.string().email().optional(),
+  name: z.string().trim().min(1),
+  industry: nullableText,
+  phone: nullableText,
+  email: z.union([z.string().trim().email(), z.literal(""), z.null()]).transform(v => v || null).optional(),
   // BR-020 requires an address before a deal may become a proposal. Until now
   // no endpoint could set it, which made the gate unsatisfiable for every
   // API-created organization.
-  address: z.string().optional(),
-  website: z.string().optional(),
-  country: z.string().optional(),
+  address: nullableText,
+  website: nullableText,
+  country: nullableText,
+  assignedToId: z.string().uuid().nullable().optional(),
+  assignedDepartmentId: z.string().uuid().nullable().optional(),
 });
 
 const updateSchema = z.object({
-  name: z.string().min(1).optional(),
-  industry: z.string().min(1).optional(),
+  name: z.string().trim().min(1).optional(),
+  industry: nullableText,
   phone: nullableText,
   email: z
     .union([z.string().trim().email("Enter a valid email address"), z.literal(""), z.null()])
@@ -42,28 +47,13 @@ const updateSchema = z.object({
   country: nullableText,
 });
 
-/**
- * Next sequential client number, e.g. CL-0001.
- *
- * Read-then-increment rather than a database sequence so the format stays in
- * one place. A concurrent create could pick the same number, so the insert is
- * retried on the unique-violation the schema already enforces.
- */
-async function nextClientNumber(): Promise<string> {
-  const last = await prisma.organization.findFirst({
-    where: { clientNumber: { startsWith: "CL-" } },
-    orderBy: { clientNumber: "desc" },
-    select: { clientNumber: true },
-  });
-  const current = last?.clientNumber ? Number(last.clientNumber.slice(3)) : 0;
-  return `CL-${String(current + 1).padStart(4, "0")}`;
-}
-
 // Search + filter in one endpoint — BR-001 is a "search before creating"
 // rule, so the frontend calls GET /organizations?q=... and surfaces matches
 // before offering a create form. q matches the name, industry is an
 // exact match for filtering (PRD 6.1).
 organizationsRouter.get("/", async (req: AuthedRequest, res) => {
+  const assignment = z.enum(["all", "mine", "department", "unassigned"]).default("all").safeParse(req.query.assignment);
+  if (!assignment.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "Invalid assignment filter." } });
   const focus = z.string().uuid().optional().safeParse(req.query.id);
   if (!focus.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "Invalid organization id." } });
   const qParam = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
@@ -80,20 +70,20 @@ organizationsRouter.get("/", async (req: AuthedRequest, res) => {
     });
   }
 
-  const where = {
+  const where = { AND: [organizationScope(req.user), {
+      ...(assignment.data === "mine" ? { assignedToId: req.user!.id }
+        : assignment.data === "department" ? { assignedDepartmentId: { in: accessibleDepartmentIds(req.user!) } }
+        : assignment.data === "unassigned" ? { assignedToId: null, assignedDepartmentId: null } : {}),
       ...(focus.data ? { id: focus.data } : {}),
       ...(req.query.view === "prospects" ? prospectDirectoryWhere() : {}),
-      ...directorySearch(qParam),
       ...(industryParam ? { industry: industryParam } : {}),
-  };
+  }, directorySearch(qParam)] };
   const orgs = await prisma.organization.findMany({
     where,
-    // The list is shared by every role, so the embedded opportunities must be
-    // narrowed with the same scope as the pipeline itself. Returning every
-    // deal of every org handed a Manager other people's titles, owners and
-    // amounts (BR-012). The `stage` is kept because the client derives an
-    // org's client/prospect badge from it.
+    // Apply account access before both pagination and totals. Embedded deal
+    // data follows exactly the same assignment scope.
     include: {
+      ...assignmentInclude,
       ...(req.query.paginated === "true" ? { contacts: { orderBy: { name: "asc" as const } } } : {}),
       opportunities: {
         where: opportunityScope(req.user),
@@ -109,28 +99,34 @@ organizationsRouter.get("/", async (req: AuthedRequest, res) => {
 });
 
 organizationsRouter.post("/", async (req: AuthedRequest, res) => {
+  if (!canCreateProspect(req.user!.role)) return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Only administrators and Partners can add prospects." } });
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: parsed.error.message } });
   }
 
-  // Auto-assign the client number; retry on the (rare) concurrent collision.
-  let org = null;
-  for (let attempt = 0; attempt < 5 && !org; attempt++) {
-    try {
-      org = await prisma.organization.create({
-        data: { ...parsed.data, clientNumber: await nextClientNumber() },
-      });
-    } catch (error) {
-      if ((error as { code?: string }).code === "P2002") continue;
-      throw error;
-    }
+  try {
+    const org = await prisma.$transaction(tx => createProspect(tx, req.user!, parsed.data), { isolationLevel: "Serializable" });
+    return res.status(201).json({ success: true, data: org });
+  } catch (error) {
+    if (error instanceof ProspectError) return res.status(error.status).json({ success: false, error: { code: error.code, message: error.message } });
+    throw error;
   }
-  if (!org) {
-    return res.status(500).json({ success: false, error: { code: "CLIENT_NUMBER_FAILED", message: "Could not allocate a client number. Try again." } });
-  }
+});
 
-  res.status(201).json({ success: true, data: org });
+organizationsRouter.patch("/:id/assignment", async (req: AuthedRequest, res) => {
+  if (!canCreateProspect(req.user!.role)) return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Only administrators and Partners can assign prospects." } });
+  const params = idParamSchema.safeParse(req.params);
+  const body = z.object({ assignedToId: z.string().uuid().nullable().optional(), assignedDepartmentId: z.string().uuid().nullable().optional() })
+    .refine(data => data.assignedToId !== undefined || data.assignedDepartmentId !== undefined).safeParse(req.body);
+  if (!params.success || !body.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "Choose a valid team member or department, or clear the assignment." } });
+  try {
+    const org = await prisma.$transaction(tx => assignAccount(tx, req.user!, params.data.id, body.data.assignedToId, body.data.assignedDepartmentId), { isolationLevel: "Serializable" });
+    return res.json({ success: true, data: org });
+  } catch (error) {
+    if (error instanceof ProspectError) return res.status(error.status).json({ success: false, error: { code: error.code, message: error.message } });
+    throw error;
+  }
 });
 
 // Edit an organization's record — most importantly its address, which BR-020
@@ -147,7 +143,7 @@ organizationsRouter.patch("/:id", async (req: AuthedRequest, res) => {
   }
 
   const org = await prisma.organization
-    .update({ where: { id: params.data.id }, data: body.data })
+    .update({ where: { id: params.data.id, AND: [organizationScope(req.user)] }, data: body.data })
     .catch((e: { code?: string }) => {
       if (e?.code === "P2025") return null;
       throw e;

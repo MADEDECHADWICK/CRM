@@ -29,13 +29,13 @@ export const tokens = {
 
     ink: "#111827",
     inkMuted: "#5B6472",
-    inkFaint: "#9AA3B2",
+    inkFaint: "#778596",
 
-    canvas: "#F6F7FA",
+    canvas: "#F7F8FA",
     surface: "#FFFFFF",
     surfaceMuted: "#EEF0F5",
     surfacePressed: "#F1F3F8",
-    border: "#E5E8EF",
+    border: "#E5EAF0",
     borderStrong: "#CFD5E1",
 
     success: "#059669",

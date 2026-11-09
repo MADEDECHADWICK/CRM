@@ -11,6 +11,7 @@ import {
   ScrollView,
   StyleSheet,
   View,
+  useWindowDimensions,
   type RefreshControlProps,
   type StyleProp,
   type ViewStyle,
@@ -41,12 +42,16 @@ export function Screen({
   scrollRef,
 }: ScreenProps) {
   const insets = useLayoutInsets();
+  const { width } = useWindowDimensions();
+  const desktop = Platform.OS === "web" && width >= 1024;
 
   const body = (
     <View
       style={[
         padded && styles.padded,
-        { paddingTop: insets.top + 10 },
+        { paddingTop: insets.top + (desktop ? 28 : 18) },
+        Platform.OS === "web" && { width: "100%", maxWidth: 1440, alignSelf: "center" },
+        desktop && { paddingHorizontal: width >= 1600 ? 48 : 36 },
         contentContainerStyle,
       ]}
     >

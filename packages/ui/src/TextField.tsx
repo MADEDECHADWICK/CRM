@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   StyleSheet,
   Text,
@@ -20,15 +20,21 @@ export function TextField({
   error,
   right,
   style,
+  onFocus,
+  onBlur,
   ...props
 }: TextFieldProps) {
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.wrapper}>
       <Text style={styles.label}>{label}</Text>
 
-      <View style={[styles.inputRow, error ? styles.inputRowError : undefined]}>
+      <View style={[styles.inputRow, focused && styles.focused, error ? styles.inputRowError : undefined]}>
         <TextInput
           {...props}
+          accessibilityLabel={props.accessibilityLabel ?? label}
+          onFocus={event => { setFocused(true); onFocus?.(event); }}
+          onBlur={event => { setFocused(false); onBlur?.(event); }}
           style={[styles.input, style]}
           placeholderTextColor={tokens.color.inkFaint}
         />
@@ -48,7 +54,7 @@ const styles = StyleSheet.create({
 
   label: {
     marginBottom: 7,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "600",
     color: tokens.color.inkMuted,
   },
@@ -58,7 +64,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     minHeight: 48,
     borderWidth: 1,
-    borderColor: tokens.color.border,
+    borderColor: tokens.color.borderStrong,
     borderRadius: tokens.radius.sm,
     backgroundColor: tokens.color.surface,
     paddingHorizontal: 14,
@@ -71,12 +77,17 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     paddingVertical: 0,
-    fontSize: 16,
+    fontSize: 15,
     color: tokens.color.ink,
   },
 
   right: {
     marginLeft: 10,
+  },
+
+  focused: {
+    borderColor: tokens.color.brand,
+    backgroundColor: tokens.color.brandFaint,
   },
 
   error: {

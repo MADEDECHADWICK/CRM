@@ -3,6 +3,9 @@ export type AuthUser = {
   name: string;
   email: string;
   role: "MARKETING_BD" | "PARTNER" | "MANAGER";
+  departmentId?: string | null;
+  department?: { id: string; name: string } | null;
+  headedDepartments?: { id: string; name: string }[];
 };
 
 export type LoginRequest = {

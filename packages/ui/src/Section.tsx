@@ -30,8 +30,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 4,
-    marginBottom: 12,
+    marginTop: 14,
+    marginBottom: 14,
+    gap: 12,
+    flexWrap: "wrap",
   },
 
   titleWrap: {
@@ -49,8 +51,9 @@ const styles = StyleSheet.create({
   },
 
   title: {
-    ...tokens.type.micro,
-    textTransform: "uppercase",
-    color: tokens.color.inkMuted,
+    fontSize: 15,
+    fontWeight: "600",
+    letterSpacing: -0.2,
+    color: tokens.color.brand,
   },
 });

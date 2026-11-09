@@ -42,6 +42,8 @@ export function Segmented<T extends string>({
       <Pressable
         key={option.key}
         onPress={() => onChange(option.key)}
+        accessibilityRole="tab"
+        accessibilityState={{ selected: active }}
         style={({ pressed }) => [
           styles.item,
           many ? styles.itemSnug : styles.itemGrow,
@@ -97,7 +99,7 @@ export function Segmented<T extends string>({
 const styles = StyleSheet.create({
   wrap: {
     flexDirection: "row",
-    backgroundColor: tokens.color.surfaceMuted,
+    backgroundColor: "#EDF1F5",
     borderRadius: tokens.radius.sm,
     padding: 4,
     gap: 4,
@@ -116,7 +118,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
     paddingVertical: 9,
-    paddingHorizontal: 8,
+    paddingHorizontal: 14,
     borderRadius: 8,
   },
 
@@ -146,7 +148,7 @@ const styles = StyleSheet.create({
   },
 
   labelActive: {
-    color: tokens.color.ink,
+    color: tokens.color.brand,
   },
 
   count: {

@@ -1,3 +1,5 @@
+import { departmentPerformance } from "./departmentPerformance";
+import { UserUpdateError } from "../users/userActions";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
@@ -6,6 +8,7 @@ import {
   requireAuth,
   AuthedRequest,
   opportunityScope,
+  organizationScope,
 } from "../../middleware/authorize";
 import {
   REPORT_PERIODS,
@@ -55,6 +58,20 @@ const summaryQuerySchema = z.object({
   period: z.enum(REPORT_PERIODS).default("all"),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
+});
+
+reportingRouter.get("/department-performance", async (req: AuthedRequest, res) => {
+  const parsed = summaryQuerySchema.extend({ memberId: z.string().uuid().optional() }).safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: parsed.error.message } });
+  const range = parsed.data.period === "custom" ? customReportRange(parsed.data.from, parsed.data.to) : { range: reportPeriodRange(parsed.data.period) };
+  if ("error" in range) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: range.error } });
+  try {
+    const data = await prisma.$transaction(tx => departmentPerformance(tx, req.user!, parsed.data.memberId ?? req.user!.id, range.range), { isolationLevel: "RepeatableRead" });
+    res.json({ success: true, data });
+  } catch (error) {
+    if (error instanceof UserUpdateError) return res.status(error.status).json({ success: false, error: { code: error.code, message: error.message } });
+    throw error;
+  }
 });
 
 // Deal metrics use real Opportunity records. All-time directory totals also
@@ -144,10 +161,8 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
 
     const directoryTotals = query.data.period === "all"
       ? await Promise.all([
-          prisma.organization.count({ where: prospectDirectoryWhere() }),
-          prisma.organization.count({ where: clientDirectoryWhere(
-            req.user!.role === "MARKETING_BD" ? {} : { ownerId: req.user!.id }
-          ) }),
+          prisma.organization.count({ where: { AND: [organizationScope(req.user), prospectDirectoryWhere()] } }),
+          prisma.organization.count({ where: { AND: [organizationScope(req.user), clientDirectoryWhere()] } }),
         ])
       : null;
 

@@ -49,6 +49,9 @@ export function Button({
     <Pressable
       onPress={onPress}
       disabled={isDisabled}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityState={{ disabled: isDisabled, busy: loading }}
       style={({ pressed }) => [
         styles.base,
         size === "md" ? styles.md : styles.sm,
@@ -59,7 +62,7 @@ export function Button({
     >
       {loading ? (
         <ActivityIndicator
-          color={variant === "primary" ? tokens.color.onBrand : tokens.color.brand}
+          color={tokens.color.brand}
         />
       ) : (
         <View style={styles.content}>
@@ -84,7 +87,7 @@ const styles = StyleSheet.create({
   base: {
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: tokens.radius.sm,
+    borderRadius: 10,
     paddingHorizontal: 18,
   },
 
@@ -106,7 +109,7 @@ const styles = StyleSheet.create({
 
   text: {
     fontWeight: "700",
-    fontSize: 15,
+    fontSize: 13,
   },
 
   disabled: {
@@ -121,8 +124,8 @@ const variantStyles: Record<
   primary: {
     button: { backgroundColor: tokens.color.accent },
     pressed: { backgroundColor: tokens.color.accentStrong },
-    text: { color: tokens.color.onBrand },
-    iconColor: tokens.color.onBrand,
+    text: { color: tokens.color.brandStrong },
+    iconColor: tokens.color.brandStrong,
   },
   secondary: {
     button: {

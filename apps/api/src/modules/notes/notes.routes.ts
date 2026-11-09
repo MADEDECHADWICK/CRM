@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
-import { requireAuth, AuthedRequest, opportunityScope, scopedOpportunity } from "../../middleware/authorize";
+import { requireAuth, AuthedRequest, noteScope, scopedOrganization, scopedOpportunity } from "../../middleware/authorize";
 import { paginationSchema, pageOf } from "../../lib/pagination";
 
 export const notesRouter = Router();
@@ -18,9 +18,6 @@ const createSchema = z.object({
 // never sees notes on another manager's opportunities, no matter which
 // client they use.
 notesRouter.get("/", async (req: AuthedRequest, res) => {
-  const scope = opportunityScope(req.user);
-  const unrestricted = Object.keys(scope).length === 0;
-
   const page = paginationSchema.safeParse(req.query);
   if (!page.success) {
     return res.status(400).json({
@@ -29,22 +26,8 @@ notesRouter.get("/", async (req: AuthedRequest, res) => {
     });
   }
 
-  const where = {
-    OR: [
-      { authorId: req.user!.id },
-      ...(unrestricted
-        ? [{ opportunity: { isNot: null } }, { organization: { isNot: null } }]
-        : [
-            // note attached to an opportunity the manager owns
-            { opportunity: { ownerId: req.user!.id } },
-            // note attached to an organization that has an opportunity they own
-            { organization: { opportunities: { some: { ownerId: req.user!.id } } } },
-          ]),
-    ],
-  };
-
   const notes = await prisma.note.findMany({
-    where,
+    where: noteScope(req.user),
     include: {
       author: { select: { id: true, name: true } },
       opportunity: { include: { organization: true } },
@@ -80,6 +63,10 @@ notesRouter.post("/", async (req: AuthedRequest, res) => {
         error: { code: "NOT_FOUND", message: "Opportunity not found or not in your scope." },
       });
     }
+  }
+
+  if (parsed.data.organizationId && !await scopedOrganization(req.user, parsed.data.organizationId)) {
+    return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Organization not found." } });
   }
 
   const note = await prisma.note.create({

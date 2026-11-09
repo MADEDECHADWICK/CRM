@@ -14,12 +14,16 @@ import {
   type Contact,
   type Organization,
   tokens,
+  canManageStaff,
+  canCreateProspect,
+  canReassignProspect,
 } from "@crm/core";
 
 import {
   AppHeader,
   Button,
   Card,
+  Chip,
   EmptyState,
   Icon,
   IconSet,
@@ -35,6 +39,7 @@ import { Alert } from "../lib/dialogs";
 import { useDirectoryPage } from "../components/useDirectoryPage";
 import { DirectoryPager } from "../components/DirectoryPager";
 import { OrganizationSourceDetails } from "../components/OrganizationSourceDetails";
+import { AccountAssignmentSheet } from "../components/AccountAssignmentSheet";
 
 function initials(name: string): string {
   return name
@@ -57,7 +62,9 @@ export function ProspectsScreen({
   focusOrganizationId = null,
   onFocusHandled,
 }: ProspectsScreenProps) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const canManage = !!user && canManageStaff(user.role);
+  const canAdd = !!user && canCreateProspect(user.role);
 
   const scrollRef = useRef<ScrollView>(null);
   const cardOffsets = useRef<Record<string, number>>({});
@@ -65,11 +72,14 @@ export function ProspectsScreen({
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [assignmentFilter, setAssignmentFilter] = useState<"all" | "mine" | "unassigned">("all");
+  const [showAddProspect, setShowAddProspect] = useState(false);
+  const [assignmentOrg, setAssignmentOrg] = useState<Organization | null>(null);
   // A focused directory contact may belong to an existing customer. Include
   // all accounts for that lookup, while the normal tab shows prospects only.
   const [focused, setFocused] = useState<string | null>(null);
-  const directory = useDirectoryPage<Organization & { contacts: Contact[] }>(
-    focused ? `/organizations?id=${encodeURIComponent(focused)}` : "/organizations?view=prospects", token, query
+  const directory = useDirectoryPage<Organization & { contacts: Contact[]; opportunities?: { stage: string }[] }>(
+    focused ? `/organizations?id=${encodeURIComponent(focused)}` : `/organizations?view=prospects&assignment=${assignmentFilter}`, token, query
   );
   const { items: organizations, loading, error: loadError, load } = directory;
   const contacts = useMemo(() => organizations.flatMap((org) => org.contacts), [organizations]);
@@ -224,6 +234,7 @@ export function ProspectsScreen({
           icon={IconSet.People}
           title="Prospects"
           subtitle={`${directory.total.toLocaleString()} ${focused ? "matching accounts" : "prospects on file"}`}
+          right={canAdd ? <Button title="Add prospect" icon={IconSet.Add} onPress={() => setShowAddProspect(true)} size="sm" /> : undefined}
         />
 
         <View style={styles.searchWrap}>
@@ -234,20 +245,24 @@ export function ProspectsScreen({
           />
         </View>
 
+        <View style={styles.filters}>
+          {([ ["all", canManage ? "All prospects" : "My and department prospects"], ["mine", "Assigned to me"], ...(canManage ? [["unassigned", "Unassigned"] as const] : []) ] as const).map(([value, label]) =>
+            <Chip key={value} label={label} selected={!focused && assignmentFilter === value} onPress={() => { setFocused(null); setAssignmentFilter(value); directory.setPage(0); }} />
+          )}
+        </View>
+
         <DirectoryPager page={directory.page} total={directory.total} busy={directory.busy} onChange={directory.setPage} />
 
         {filtered.length === 0 ? (
           <EmptyState
             icon={IconSet.People}
             title={
-              organizations.length === 0
-                ? "No prospects yet"
-                : "Nothing matches"
+              query || assignmentFilter !== "all" ? "No matching prospects" : canManage ? "No prospects yet" : "No assigned prospects"
             }
             subtitle={
-              organizations.length === 0
-                ? "Organisations you engage become prospects here."
-                : "Try a different name, industry or contact person."
+              assignmentFilter === "mine" && !query ? "No prospects are assigned to you yet."
+                : query || assignmentFilter !== "all" ? "Try a different search or assignment filter."
+                : canAdd ? "Use Add prospect to add an organization." : "Ask your administrator to assign prospects to you or your department."
             }
           />
         ) : (
@@ -275,7 +290,7 @@ export function ProspectsScreen({
                     </View>
 
                     <View style={styles.orgTextCol}>
-                      <Text style={styles.orgName} numberOfLines={1}>
+                      <Text style={styles.orgName} numberOfLines={2}>
                         {organization.name}
                       </Text>
 
@@ -338,6 +353,14 @@ export function ProspectsScreen({
                     </View>
                   ) : null}
                 </Pressable>
+
+                {!organization.isExistingClient && <View style={styles.assignmentRow}>
+                  <View style={{ flex: 1, gap: 3 }}>
+                    <Text style={styles.assignmentText}>{[organization.assignedTo ? `Assigned to ${organization.assignedTo.name}` : null, organization.assignedDepartment?.name].filter(Boolean).join(" · ") || "Unassigned"}</Text>
+                    {organization.assignedBy && organization.assignedAt ? <Text style={styles.contactText}>By {organization.assignedBy.name} · {new Date(organization.assignedAt).toLocaleDateString("en-KE")}</Text> : null}
+                  </View>
+                  {user && canReassignProspect(user, organization.assignedToId) && !organization.opportunities?.some(opp => opp.stage === "WON") && <Button title={organization.assignedToId || organization.assignedDepartmentId ? "Reassign" : "Assign"} icon={IconSet.Person} variant="secondary" size="sm" onPress={() => setAssignmentOrg(organization)} />}
+                </View>}
 
                 {expanded ? (
                   <View style={styles.detail}>
@@ -472,6 +495,14 @@ export function ProspectsScreen({
         )}
       </>
 
+      {showAddProspect && canAdd && <OrgFormSheet visible token={token ?? ""} onClose={() => setShowAddProspect(false)} onSaved={(saved) => {
+        const handedOff = !canManage && saved.assignedToId !== user?.id;
+        setFocused(null); setAssignmentFilter("all"); setQuery(handedOff ? "" : saved.name); directory.setPage(0); setExpandedId(handedOff ? null : saved.id); void load();
+        if (handedOff) Alert.alert("Prospect added", `${saved.name} was assigned to ${saved.assignedTo?.name ?? "the selected team member"}. It will appear in their prospects.`);
+      }} />}
+
+      {assignmentOrg && user && canReassignProspect(user, assignmentOrg.assignedToId) && <AccountAssignmentSheet token={token ?? ""} organization={assignmentOrg} onClose={() => setAssignmentOrg(null)} onSaved={load} />}
+
       {formOrg ? (
         <ContactFormSheet
           visible={formOpen}
@@ -512,8 +543,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
 
+  filters: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 6 },
+  assignmentRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: tokens.color.border },
+  assignmentText: { ...tokens.type.caption, color: tokens.color.inkMuted, fontWeight: "500", flex: 1, minWidth: 0 },
+
   orgCard: {
-    padding: 14,
+    padding: 20,
   },
 
   orgHeader: {
@@ -544,8 +579,8 @@ const styles = StyleSheet.create({
 
   orgName: {
     ...tokens.type.bodyStrong,
-    fontSize: 17,
-    color: tokens.color.ink,
+    fontSize: 16,
+    color: tokens.color.brand,
   },
 
   badgeRow: {

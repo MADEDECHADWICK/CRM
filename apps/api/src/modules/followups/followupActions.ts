@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma";
+import { followupScope, type AccessUser } from "../../lib/accessScope";
 
 type CreateFollowupInput = {
   note: string;
@@ -37,34 +38,34 @@ export async function createFollowup(input: CreateFollowupInput) {
 // assignee (if one is set) or the creator, never by anyone else.
 // This and the GET list scope are what make BR-011 ("follow-ups belong to
 // the person who created them") true on the backend.
-export async function deleteFollowup(followupId: string, requestingUserId: string) {
-  const followup = await prisma.followup.findUniqueOrThrow({
-    where: { id: followupId },
+export async function deleteFollowup(followupId: string, user: AccessUser) {
+  const followup = await prisma.followup.findFirstOrThrow({
+    where: { id: followupId, ...followupScope(user) },
   });
 
   const isOwner =
-    followup.assignedToId === requestingUserId || followup.createdById === requestingUserId;
+    followup.assignedToId === user.id || followup.createdById === user.id;
 
   if (!isOwner) {
     throw new Error("You can only delete a follow-up you created or are assigned to.");
   }
 
-  return prisma.followup.delete({ where: { id: followupId } });
+  return prisma.followup.delete({ where: { id: followupId, AND: [followupScope(user)] } });
 }
 
-export async function completeFollowup(followupId: string, requestingUserId: string) {
-  const followup = await prisma.followup.findUniqueOrThrow({
-    where: { id: followupId },
+export async function completeFollowup(followupId: string, user: AccessUser) {
+  const followup = await prisma.followup.findFirstOrThrow({
+    where: { id: followupId, AND: [followupScope(user)] },
   });
 
   const isOwner =
-    followup.assignedToId === requestingUserId || followup.createdById === requestingUserId;
+    followup.assignedToId === user.id || followup.createdById === user.id;
   if (!isOwner) {
     throw new Error("You can only complete a follow-up you created or are assigned to.");
   }
 
   return prisma.followup.update({
-    where: { id: followupId },
+    where: { id: followupId, AND: [followupScope(user)] },
     data: { status: "COMPLETED", completedAt: new Date() },
   });
 }

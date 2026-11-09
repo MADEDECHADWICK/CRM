@@ -1,3 +1,5 @@
+import { SheetCloseButton } from "./SheetCloseButton";
+import { useSheetLayout } from "./useSheetLayout";
 // apps/mobile/src/components/ContactFormSheet.tsx
 //
 // The add/edit contact form, shared by the Contacts screen and the inline
@@ -67,6 +69,7 @@ export function ContactFormSheet({
   onClose,
   onSaved,
 }: ContactFormSheetProps) {
+  const sheetLayout = useSheetLayout();
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
 
@@ -154,12 +157,13 @@ export function ContactFormSheet({
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
-        style={styles.backdrop}
+        style={[styles.backdrop, sheetLayout.backdrop]}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <Pressable style={styles.tapAway} onPress={onClose} />
 
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, sheetLayout.surface]}>
+          <SheetCloseButton onClose={onClose} disabled={saving} />
           <View style={styles.handle} />
 
           <ScrollView
@@ -285,6 +289,9 @@ const styles = StyleSheet.create({
   },
 
   sheet: {
+    width: "100%",
+    maxWidth: 720,
+    alignSelf: "center",
     backgroundColor: tokens.color.canvas,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,

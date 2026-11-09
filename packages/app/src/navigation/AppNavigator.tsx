@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { AppShell } from "./AppShell";
 
-import { Icon, IconSet, useLayoutInsets } from "@crm/ui";
-import { tokens } from "@crm/core";
+import { IconSet } from "@crm/ui";
 
 import { useAuth } from "../auth/AuthContext";
 
@@ -43,7 +42,6 @@ function buildScreens(user: {
 export function AppNavigator() {
   const { isAuthenticated, user } = useAuth();
 
-  const insets = useLayoutInsets();
 
   const [screen, setScreen] =
     useState<ScreenName>("HOME");
@@ -70,6 +68,7 @@ export function AppNavigator() {
     case "HOME":
       content = (
         <HomeScreen
+          onNavigate={setScreen}
           onOpenClient={(organizationId) => {
             setFocusClientId(organizationId);
             setScreen("PROSPECTS");
@@ -108,96 +107,5 @@ export function AppNavigator() {
       break;
   }
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.content}>{content}</View>
-
-      <View
-        style={[
-          styles.navigation,
-          { paddingBottom: insets.bottom + 6 },
-        ]}
-      >
-        {screens.map((item) => {
-          const active = activeScreen === item.key;
-
-          return (
-            <Pressable
-              key={item.key}
-              onPress={() => setScreen(item.key)}
-              accessibilityRole="tab"
-              accessibilityLabel={item.label}
-              accessibilityState={{ selected: active }}
-              style={({ pressed }) => [
-                styles.navButton,
-                pressed && styles.navPressed,
-              ]}
-            >
-              <Icon
-                name={item.icon}
-                size={22}
-                color={
-                  active
-                    ? tokens.color.accent
-                    : tokens.color.inkFaint
-                }
-              />
-
-              <Text
-                style={[
-                  styles.navText,
-                  active && styles.navTextActive,
-                ]}
-              >
-                {item.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-    </View>
-  );
+  return <AppShell items={screens} active={activeScreen} onSelect={key => setScreen(key as ScreenName)}>{content}</AppShell>;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: tokens.color.canvas,
-  },
-
-  content: {
-    flex: 1,
-  },
-
-  navigation: {
-    flexDirection: "row",
-    backgroundColor: tokens.color.surface,
-    borderTopWidth: 1,
-    borderTopColor: tokens.color.border,
-    paddingTop: 6,
-    paddingHorizontal: 4,
-    ...tokens.shadow.floated,
-  },
-
-  navButton: {
-    flex: 1,
-    alignItems: "center",
-    gap: 2,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-
-  navPressed: {
-    backgroundColor: tokens.color.surfacePressed,
-  },
-
-  navText: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: tokens.color.inkFaint,
-  },
-
-  navTextActive: {
-    color: tokens.color.accent,
-  },
-});

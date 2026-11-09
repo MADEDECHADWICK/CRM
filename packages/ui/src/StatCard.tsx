@@ -45,7 +45,7 @@ export function StatCard({
         ) : null}
       </View>
 
-      <Text style={styles.value}>{value}</Text>
+      <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65}>{typeof value === "number" ? value.toLocaleString() : value}</Text>
 
       {sub ? <Text style={styles.sub}>{sub}</Text> : null}
     </View>
@@ -55,11 +55,12 @@ export function StatCard({
 const styles = StyleSheet.create({
   card: {
     backgroundColor: tokens.color.surface,
-    borderRadius: tokens.radius.md,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: tokens.color.border,
-    padding: 16,
-    ...tokens.shadow.hairline,
+    padding: 20,
+    minHeight: 145,
+    ...tokens.shadow.card,
   },
 
   topRow: {
@@ -71,28 +72,33 @@ const styles = StyleSheet.create({
 
   label: {
     flexShrink: 1,
-    ...tokens.type.micro,
-    textTransform: "uppercase",
-    color: tokens.color.inkFaint,
+    ...tokens.type.caption,
+    fontWeight: "600",
+    color: tokens.color.inkMuted,
   },
 
   iconCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 34,
+    height: 34,
+    borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
   },
 
   value: {
-    ...tokens.type.h2,
-    color: tokens.color.ink,
-    marginTop: 12,
+    fontSize: 32,
+    lineHeight: 40,
+    fontWeight: "600",
+    letterSpacing: -1,
+    color: tokens.color.brand,
+    marginTop: 16,
   },
 
   sub: {
     ...tokens.type.caption,
     color: tokens.color.inkMuted,
     marginTop: 3,
+    lineHeight: 18,
+    minHeight: 36,
   },
 });

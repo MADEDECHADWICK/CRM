@@ -1,7 +1,7 @@
 import { Router, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
-import { requireAuth, AuthedRequest } from "../../middleware/authorize";
+import { requireAuth, AuthedRequest, contactScope, organizationScope } from "../../middleware/authorize";
 import { paginationSchema, pageOf } from "../../lib/pagination";
 import { canManageStaff } from "@crm/core";
 
@@ -102,6 +102,7 @@ contactsRouter.get("/", async (req: AuthedRequest, res) => {
 
   const contacts = await prisma.contact.findMany({
     where: {
+      ...contactScope(req.user),
       ...(organizationId ? { organizationId } : {}),
       // Search spans name, job title and email so "jane" or "finance" both
       // find the right person.
@@ -129,8 +130,8 @@ contactsRouter.get("/:id", async (req: AuthedRequest, res) => {
   const id = parseId(req, res);
   if (!id) return;
 
-  const contact = await prisma.contact.findUnique({
-    where: { id },
+  const contact = await prisma.contact.findFirst({
+    where: { id, ...contactScope(req.user) },
     include: withOrganization,
   });
 
@@ -167,7 +168,7 @@ contactsRouter.post("/", async (req: AuthedRequest, res) => {
   // caller could set `id`/`createdAt` directly.
   const { organizationId, ...fields } = body.data;
 
-  const org = await prisma.organization.findUnique({ where: { id: organizationId } });
+  const org = await prisma.organization.findFirst({ where: { id: organizationId, ...organizationScope(req.user) } });
   if (!org) {
     return res
       .status(404)
@@ -178,6 +179,7 @@ contactsRouter.post("/", async (req: AuthedRequest, res) => {
   // previous one in the same transaction. Serializable so two concurrent
   // promotions cannot both survive and leave the org with two primaries.
   const contact = await prisma.$transaction(async (tx) => {
+    await tx.organization.findFirstOrThrow({ where: { id: organizationId, ...organizationScope(req.user) }, select: { id: true } });
     if (fields.isPrimary) {
       await tx.contact.updateMany({
         where: { organizationId, isPrimary: true },
@@ -201,7 +203,7 @@ contactsRouter.patch("/:id", async (req: AuthedRequest, res) => {
   const id = parseId(req, res);
   if (!id) return;
 
-  const existing = await prisma.contact.findUnique({ where: { id } });
+  const existing = await prisma.contact.findFirst({ where: { id, ...contactScope(req.user) } });
   if (!existing) {
     return res
       .status(404)
@@ -235,7 +237,7 @@ contactsRouter.patch("/:id", async (req: AuthedRequest, res) => {
     }
 
     return tx.contact.update({
-      where: { id: existing.id },
+      where: { id: existing.id, AND: [contactScope(req.user)] },
       data,
       include: withOrganization,
     });

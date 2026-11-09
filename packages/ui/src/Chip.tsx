@@ -66,7 +66,7 @@ const styles = StyleSheet.create({
   },
 
   chipSelected: {
-    backgroundColor: tokens.color.ink,
+    backgroundColor: tokens.color.brand,
   },
 
   label: {
