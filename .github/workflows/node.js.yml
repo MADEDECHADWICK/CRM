@@ -29,6 +29,10 @@ jobs:
       # The Prisma client is generated (not committed), so the API cannot
       # typecheck or run without it.
       - name: Generate Prisma client
+        # prisma.config.ts validates DATABASE_URL when loaded. Client generation
+        # does not connect, so CI only needs a well-formed placeholder URL.
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/crm_ci
         run: pnpm --filter api exec prisma generate
 
       - name: Typecheck
