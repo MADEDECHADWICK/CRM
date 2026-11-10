@@ -61,3 +61,32 @@ pnpm typecheck
 pnpm --filter api test
 pnpm --filter web build
 ```
+
+## Assigning existing Partner targets
+
+This is a separate, assignment-only operation. Do not rerun the destructive
+cutover to allocate prospects. Keep an explicitly reviewed allocation JSON in
+`.local-data/`, with entries containing `sourcePartner`, `country`, `partner`,
+`department`, and `mode` (`primary` or `country`). Names must resolve uniquely
+to existing Partners, and each target department must still have that Partner
+as its head. `primary` also checks current primary membership. The approved
+2026 allocation uses primary departments for Kenya, country departments for
+Uganda/Tanzania, and maps the workbook's Rwanda Partner to Ronald and Ronalds
+Rwanda. Unmapped workbook rows are listed as excluded and never assigned.
+
+```powershell
+python apps/api/scripts/prepare_partner_targets.py --workbook "C:\path\prospects.xlsx" --allocations apps/api/.local-data/partner-target-allocations.json --output apps/api/.local-data/partner-targets-2026.json
+pnpm --filter api exec tsx scripts/assign-partner-targets.ts --file .local-data/partner-targets-2026.json
+pnpm --filter api exec tsx scripts/assign-partner-targets.ts --file .local-data/partner-targets-2026.json --apply
+```
+
+Preview first against the intended database. The apply command verifies the
+workbook hash and source identities, rejects conflicting assignments or
+accounts with deals/client classification, locks the affected prospect rows,
+and updates assignments in one serializable transaction. Correct assignments
+are preserved on reruns. It never inserts accounts, changes customer records,
+creates opportunities, or turns planning fees into revenue. A private account
+snapshot is saved before writes; an audit and `.committed.json` receipt record
+the completed transaction. A fresh preview should report zero changes after
+success. Verify the deployed API's directory totals and department assignments
+afterwards; this data operation requires no application redeployment.

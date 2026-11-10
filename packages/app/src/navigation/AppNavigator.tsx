@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { Organization } from "@crm/core";
 import { AppShell } from "./AppShell";
 
 import { IconSet } from "@crm/ui";
@@ -49,6 +50,7 @@ export function AppNavigator() {
   // Client tapped on Home, carried over to Prospects so it can be expanded
   // and scrolled into view on arrival.
   const [focusClientId, setFocusClientId] = useState<string | null>(null);
+  const [opportunityOrganization, setOpportunityOrganization] = useState<Organization | null>(null);
 
   const screens = buildScreens(user);
 
@@ -82,12 +84,13 @@ export function AppNavigator() {
         <ProspectsScreen
           focusOrganizationId={focusClientId}
           onFocusHandled={() => setFocusClientId(null)}
+          onStartOpportunity={organization => { setOpportunityOrganization(organization); setScreen("PIPELINE"); }}
         />
       );
       break;
 
     case "PIPELINE":
-      content = <OpportunitiesScreen />;
+      content = <OpportunitiesScreen initialOrganization={opportunityOrganization} onCreateHandled={() => setOpportunityOrganization(null)} />;
       break;
 
     case "CLIENTS":

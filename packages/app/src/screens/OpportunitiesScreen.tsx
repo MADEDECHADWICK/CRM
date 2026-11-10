@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -18,6 +18,7 @@ import {
   LEAD_SOURCE_LABELS,
   needsOwnerOverrideReason,
   canReassign,
+  canCreateOpportunity,
   ownerEligible,
   rankOwnerCandidates,
   RAG_LABELS,
@@ -29,12 +30,15 @@ import {
   type DepartmentDetail,
   type LeadSource,
   type Opportunity,
+  type PipelinePage,
   type OpportunityDetail,
   type Organization,
   type RagStatus,
   type Stage,
   type SubmissionType,
   type BusinessType,
+  type FollowupType,
+  FOLLOWUP_TYPE_LABELS,
   type UserLite,
   STAGE_COLORS,
   STAGE_LABELS,
@@ -64,6 +68,11 @@ import { useAuth } from "../auth/AuthContext";
 import { DateField, toNoonUTC } from "../components/DateField";
 import { apiFetch } from "../api";
 import { Alert } from "../lib/dialogs";
+import { OrganizationPicker } from "../components/OrganizationPicker";
+import { DirectoryPager } from "../components/DirectoryPager";
+import { DIRECTORY_PAGE_SIZE } from "../components/useDirectoryPage";
+import { OrgFormSheet } from "../components/OrgFormSheet";
+import { ContactFormSheet } from "../components/ContactFormSheet";
 
 type FilterKey =
   | "all"
@@ -73,7 +82,10 @@ type FilterKey =
   | "awaiting"
   | "notSubmitted"
   | "deferred"
-  | "overdue";
+  | "overdue"
+  | "won"
+  | "lost"
+  | "noReply";
 
 const FILTER_STAGE: Partial<Record<FilterKey, Stage>> = {
   prospect: "PROSPECT",
@@ -82,6 +94,9 @@ const FILTER_STAGE: Partial<Record<FilterKey, Stage>> = {
   awaiting: "AWAITING_FEEDBACK",
   notSubmitted: "NOT_SUBMITTED",
   deferred: "DEFERRED",
+  won: "WON",
+  lost: "LOST",
+  noReply: "NO_REPLY",
 };
 
 const FILTER_RAG: Partial<Record<FilterKey, RagStatus>> = {
@@ -98,6 +113,9 @@ const FILTER_LABEL: Record<FilterKey, string> = {
   notSubmitted: "Not sent",
   deferred: "Deferred",
   overdue: "Overdue",
+  won: "Won",
+  lost: "Lost",
+  noReply: "No reply",
 };
 
 const FILTER_ORDER: readonly FilterKey[] = [
@@ -109,6 +127,9 @@ const FILTER_ORDER: readonly FilterKey[] = [
   "notSubmitted",
   "deferred",
   "overdue",
+  "won",
+  "lost",
+  "noReply",
 ] as const;
 
 function fmtDate(iso: string): string {
@@ -122,15 +143,29 @@ function fmtDate(iso: string): string {
       });
 }
 
-export function OpportunitiesScreen() {
+export function OpportunitiesScreen({ initialOrganization = null, onCreateHandled }: {
+  initialOrganization?: Organization | null; onCreateHandled?: () => void;
+}) {
   const { token, user } = useAuth();
-  const isBD = user?.role === "MARKETING_BD";
+  const canCreate = !!user && canCreateOpportunity(user.role);
 
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(!!initialOrganization);
+  const [creationOrganization, setCreationOrganization] = useState(initialOrganization);
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState<PipelinePage["counts"] | null>(null);
+  const [search, setSearch] = useState("");
+  const [busy, setBusy] = useState(false);
+  const sequence = useRef(0);
+  useEffect(() => {
+    if (!initialOrganization) return;
+    setCreationOrganization(initialOrganization); setShowAddForm(true); onCreateHandled?.();
+  }, [initialOrganization, onCreateHandled]);
+  useEffect(() => { const timer = setTimeout(() => setSearch(query.trim()), 250); return () => clearTimeout(timer); }, [query]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -138,20 +173,31 @@ export function OpportunitiesScreen() {
   const load = useCallback(async () => {
     if (!token) return;
 
+    const request = ++sequence.current;
+    setBusy(true);
     try {
-      const data = await apiFetch<Opportunity[]>("/opportunities", token);
-      setOpportunities(data);
+      const params = new URLSearchParams({ paginated: "true", limit: String(DIRECTORY_PAGE_SIZE), offset: String(page * DIRECTORY_PAGE_SIZE), q: search });
+      if (FILTER_STAGE[filter]) params.set("stage", FILTER_STAGE[filter]!);
+      if (FILTER_RAG[filter]) params.set("rag", FILTER_RAG[filter]!);
+      const data = await apiFetch<PipelinePage>(`/opportunities?${params}`, token);
+      if (request !== sequence.current) return;
+      if (page > 0 && page * DIRECTORY_PAGE_SIZE >= data.total) {
+        setPage(Math.max(0, Math.ceil(data.total / DIRECTORY_PAGE_SIZE) - 1));
+        return;
+      }
+      setOpportunities(data.items); setTotal(data.total); setCounts(data.counts);
       setLoadError(null);
     } catch (err) {
       // Surfaced rather than swallowed: a failed load must not masquerade as
       // "no deals yet".
       console.error("Pipeline loading error:", err);
-      setLoadError(err instanceof Error ? err.message : "Unable to load deals.");
-    }
-  }, [token]);
+      if (request === sequence.current) setLoadError(err instanceof Error ? err.message : "Unable to load opportunities.");
+    } finally { if (request === sequence.current) setBusy(false); }
+  }, [token, page, filter, search]);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
+    return () => { sequence.current += 1; };
   }, [load]);
 
   async function refresh() {
@@ -163,45 +209,6 @@ export function OpportunitiesScreen() {
     }
   }
 
-  const counts = useMemo(() => {
-    const byStage = (stage: Stage) =>
-      opportunities.filter((item) => item.stage === stage).length;
-
-    return {
-      all: opportunities.length,
-      prospect: byStage("PROSPECT"),
-      lead: byStage("LEAD"),
-      proposal: byStage("PROPOSAL"),
-      awaiting: byStage("AWAITING_FEEDBACK"),
-      notSubmitted: byStage("NOT_SUBMITTED"),
-      deferred: byStage("DEFERRED"),
-      // Computed from the server's rag value rather than recomputed on the
-      // phone: the deadline clock is the server's, and a locally recomputed
-      // countdown could disagree with the value every other client shows.
-      overdue: opportunities.filter(
-        (item) => item.rag?.status === "OVERDUE"
-      ).length,
-    };
-  }, [opportunities]);
-
-  const filtered = useMemo(() => {
-    const stage = FILTER_STAGE[filter];
-    const rag = FILTER_RAG[filter];
-    const lower = query.trim().toLowerCase();
-
-    return opportunities.filter((item) => {
-      if (stage && item.stage !== stage) return false;
-      if (rag && item.rag?.status !== rag) return false;
-
-      if (!lower) return true;
-
-      return (
-        item.title.toLowerCase().includes(lower) ||
-        (item.organization?.name ?? "").toLowerCase().includes(lower) ||
-        item.service.toLowerCase().includes(lower)
-      );
-    });
-  }, [opportunities, filter, query]);
 
   if (loading) {
     return (
@@ -221,6 +228,7 @@ export function OpportunitiesScreen() {
             icon={IconSet.Warning}
             title="Unable to load deals"
             subtitle={loadError}
+            action={<Button title="Retry pipeline" onPress={() => void load()} variant="secondary" />}
           />
         </View>
       </Screen>
@@ -255,10 +263,10 @@ export function OpportunitiesScreen() {
           title="Pipeline"
           subtitle="Every opportunity, end to end"
           right={
-            isBD ? (
+            canCreate ? (
               <Button
                 icon={showAddForm ? IconSet.Close : IconSet.Add}
-                title={showAddForm ? "Close form" : "Add deal"}
+                title={showAddForm ? "Close form" : "Add opportunity"}
                 size="sm"
                 onPress={() => setShowAddForm((open) => !open)}
               />
@@ -268,18 +276,18 @@ export function OpportunitiesScreen() {
 
         <Segmented
           value={filter}
-          onChange={setFilter}
+          onChange={value => { setFilter(value); setPage(0); }}
           options={FILTER_ORDER.map((key) => ({
             key,
             label: FILTER_LABEL[key],
-            count: counts[key],
+            count: counts?.[FILTER_STAGE[key] ?? (key === "overdue" ? "overdue" : "all")] ?? 0,
           }))}
         />
 
         <View style={styles.searchWrap}>
           <SearchBar
             value={query}
-            onChangeText={setQuery}
+            onChangeText={value => { setQuery(value); setPage(0); }}
             placeholder="Search deals, clients, services"
           />
         </View>
@@ -287,25 +295,26 @@ export function OpportunitiesScreen() {
         {showAddForm && token ? (
           <AddDealForm
             token={token}
-            onSaved={() => {
-              setShowAddForm(false);
-              load();
+            initialOrganization={creationOrganization}
+            onSaved={id => {
+              setShowAddForm(false); setCreationOrganization(null); setSelectedId(id);
+              void load();
             }}
           />
         ) : null}
 
-        {filtered.length === 0 ? (
+        <DirectoryPager page={page} total={total} busy={busy} onChange={setPage} />
+        {opportunities.length === 0 ? (
           <EmptyState
-            icon={IconSet.Search}
-            title={counts.all === 0 ? "No deals yet" : "Nothing matches"}
-            subtitle={
-              counts.all === 0
-                ? "Add your first deal to start tracking the pipeline."
-                : "Try a different filter or search term."
-            }
+            icon={IconSet.Pipeline}
+            title={counts?.all === 0 && !search ? "Start your first opportunity" : "No matching opportunities"}
+            subtitle={counts?.all === 0 && !search
+              ? "Your prospects are ready. Choose an organization and the service you want to pursue to start tracking progress."
+              : "Try another stage or search term."}
+            action={canCreate && !showAddForm ? <Button title="Add opportunity" icon={IconSet.Add} onPress={() => setShowAddForm(true)} /> : undefined}
           />
         ) : (
-          filtered.map((opportunity) => (
+          opportunities.map((opportunity) => (
             <PipelineCard
               key={opportunity.id}
               opportunity={opportunity}
@@ -325,11 +334,13 @@ type PipelineCardProps = {
 
 type AddDealFormProps = {
   token: string;
-  onSaved: () => void;
+  onSaved: (id: string) => void;
+  initialOrganization: Organization | null;
 };
 
-function AddDealForm({ token, onSaved }: AddDealFormProps) {
-  const [organizations, setOrganizations] = useState<Organization[]>([]);
+function AddDealForm({ token, onSaved, initialOrganization }: AddDealFormProps) {
+  const { user } = useAuth();
+  const [organization, setOrganization] = useState(initialOrganization);
   const [departments, setDepartments] = useState<DepartmentDetail[]>([]);
   const [staff, setStaff] = useState<UserLite[]>([]);
   const [loadingOptions, setLoadingOptions] = useState(true);
@@ -340,7 +351,7 @@ function AddDealForm({ token, onSaved }: AddDealFormProps) {
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("KES");
   const [stage, setStage] = useState<"PROSPECT" | "LEAD">("LEAD");
-  const [organizationId, setOrganizationId] = useState<string | null>(null);
+  const organizationId = organization?.id ?? null;
   const [departmentId, setDepartmentId] = useState<string | null>(null);
   const [ownerId, setOwnerId] = useState<string | null>(null);
   // Only ever shown and sent when the chosen owner is not the department's
@@ -385,13 +396,14 @@ const ownerIsOverride =
     let active = true;
 
     Promise.all([
-      apiFetch<Organization[]>("/organizations", token),
       apiFetch<DepartmentDetail[]>("/departments", token),
       apiFetch<UserLite[]>("/users", token),
     ])
-      .then(([orgs, depts, users]) => {
+      .then(([depts, users]) => {
         if (!active) return;
-        setOrganizations(orgs);
+        const department = depts.find(d => d.id === initialOrganization?.assignedDepartmentId)
+          ?? depts.find(d => d.id === user?.departmentId);
+        if (department) { setDepartmentId(department.id); setOwnerId(department.headId ?? null); }
         setDepartments(depts);
         setStaff(users);
       })
@@ -408,7 +420,13 @@ const ownerIsOverride =
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [token, initialOrganization, user?.departmentId]);
+
+  function chooseOrganization(org: Organization | null) {
+    setOrganization(org);
+    const department = departments.find(d => d.id === org?.assignedDepartmentId);
+    if (department) { setDepartmentId(department.id); setOwnerId(department.headId ?? null); setOwnerOverrideReason(""); }
+  }
 
   async function submit() {
     if (!title.trim() || !service.trim()) {
@@ -460,7 +478,7 @@ const ownerIsOverride =
 
     try {
       setSubmitting(true);
-      await apiFetch("/opportunities", token, {
+      const created = await apiFetch<Opportunity>("/opportunities", token, {
         method: "POST",
         body: JSON.stringify({
           title: title.trim(),
@@ -488,7 +506,7 @@ const ownerIsOverride =
           ...(currency.trim() ? { currency: currency.trim() } : {}),
         }),
       });
-      onSaved();
+      onSaved(created.id);
     } catch (error) {
       Alert.alert(
         "Unable to add deal",
@@ -501,7 +519,7 @@ const ownerIsOverride =
 
   return (
     <Card style={styles.formCard}>
-      <Text style={styles.formCardTitle}>Add deal</Text>
+      <Text style={styles.formCardTitle}>New opportunity</Text>
 
       {optionsError ? (
         <Text style={styles.formError}>{optionsError}</Text>
@@ -536,20 +554,7 @@ const ownerIsOverride =
           </View>
 
           <Text style={styles.formLabel}>Organization</Text>
-          <View style={styles.chipWrap}>
-            {organizations.map((org) => (
-              <Chip
-                key={org.id}
-                label={org.name}
-                selected={organizationId === org.id}
-                onPress={() =>
-                  setOrganizationId((current) =>
-                    current === org.id ? null : org.id
-                  )
-                }
-              />
-            ))}
-          </View>
+          <OrganizationPicker token={token} selected={organization} onSelect={chooseOrganization} />
 
           <Text style={styles.formLabel}>Department</Text>
           <View style={styles.chipWrap}>
@@ -670,10 +675,10 @@ const ownerIsOverride =
           />
 
           <Button
-            title="Add deal"
+            title="Create opportunity"
             onPress={submit}
             loading={submitting}
-            disabled={submitting}
+            disabled={submitting || !organizationId || !departmentId || !ownerId}
             icon={IconSet.Add}
           />
         </>
@@ -764,6 +769,13 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
 
   const [detail, setDetail] = useState<OpportunityDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [editingOrganization, setEditingOrganization] = useState(false);
+  const [addingContact, setAddingContact] = useState(false);
+  const [followupOpen, setFollowupOpen] = useState(false);
+  const [followupNote, setFollowupNote] = useState("");
+  const [followupDate, setFollowupDate] = useState<Date | null>(null);
+  const [followupType, setFollowupType] = useState<FollowupType>("CALL");
+  const [followupBusy, setFollowupBusy] = useState(false);
 
   // Transition form
   const [target, setTarget] = useState<Stage | null>(null);
@@ -1115,6 +1127,20 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
     }
   }
 
+  async function addFollowup() {
+    if (!token || !detail || !followupDate || !followupNote.trim()) return;
+    try {
+      setFollowupBusy(true);
+      await apiFetch("/followups", token, { method: "POST", body: JSON.stringify({
+        note: followupNote.trim(), type: followupType, dueAt: toNoonUTC(followupDate).toISOString(),
+        opportunityId: detail.id, assignedToId: detail.owner?.id ?? user?.id,
+      }) });
+      setFollowupOpen(false); setFollowupNote(""); setFollowupDate(null);
+      await loadDetail();
+    } catch (error) { Alert.alert("Unable to schedule follow-up", error instanceof Error ? error.message : "Please try again."); }
+    finally { setFollowupBusy(false); }
+  }
+
   if (loading || !detail) {
     return (
       <Screen>
@@ -1126,7 +1152,7 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
   }
 
   const bannerColor = STAGE_COLORS[detail.stage];
-  const transitions = ALLOWED_TRANSITIONS[detail.stage];
+  const transitions = ALLOWED_TRANSITIONS[detail.stage].filter(stage => stage !== "NOT_SUBMITTED");
   const needsAmount = target === "WON";
   // Both DEFERRED and AWAITING_FEEDBACK can carry a chase date. It is
   // mandatory for a deferral, but a soft "I'll check back" nudge when the
@@ -1558,6 +1584,10 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
                     <Text style={styles.missingItem}>{field.message}</Text>
                   </View>
                 ))}
+                <View style={styles.chipWrap}>
+                  <Button title="Edit organization details" size="sm" variant="secondary" onPress={() => setEditingOrganization(true)} />
+                  <Button title="Add decision-maker contact" size="sm" variant="secondary" onPress={() => setAddingContact(true)} />
+                </View>
               </Card>
             ) : null}
 
@@ -1684,7 +1714,7 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
 
                 {needsAmount ? (
                   <TextFieldForm
-                    label="Won value (KES)"
+                    label={`Won value (${detail.currency})`}
                     value={amount}
                     onChangeText={setAmount}
                     placeholder="e.g. 750000"
@@ -1728,6 +1758,17 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
           <Section title="Outcome reached" />
         )}
 
+        <Section title="Follow-ups" action={<Button title={followupOpen ? "Cancel follow-up" : "Schedule follow-up"} size="sm" variant="secondary" icon={IconSet.Calendar} onPress={() => setFollowupOpen(open => !open)} />} />
+        <Card>
+          {followupOpen ? <>
+            <TextFieldForm label="Next action" value={followupNote} onChangeText={setFollowupNote} placeholder="What needs to happen next?" />
+            <View style={styles.chipWrap}>{(["CALL", "EMAIL", "MEETING"] as const).map(type => <Chip key={type} label={FOLLOWUP_TYPE_LABELS[type]} selected={followupType === type} onPress={() => setFollowupType(type)} />)}</View>
+            <DateField label="Follow-up due date" value={followupDate} onChange={setFollowupDate} minimumDate={new Date()} />
+            <Button title="Save follow-up" onPress={addFollowup} loading={followupBusy} disabled={followupBusy || !followupNote.trim() || !followupDate} />
+          </> : null}
+          {detail.followups?.length ? detail.followups.map(followup => <InfoRow key={followup.id} label={followup.note} value={`${fmtDate(followup.dueAt)} · ${followup.status === "PENDING" ? "Pending" : followup.status === "COMPLETED" ? "Completed" : "Cancelled"}`} icon={IconSet.Calendar} />)
+            : <Text style={styles.noNotes}>No follow-ups scheduled for you on this opportunity.</Text>}
+        </Card>
         <Section title="Notes" />
         <View style={styles.noteInputWrap}>
           <TextInput
@@ -1802,6 +1843,10 @@ function PipelineDetail({ id, onClose }: PipelineDetailProps) {
           )}
         </Card>
       </ScrollView>
+      {token && detail.organization ? <>
+        <OrgFormSheet visible={editingOrganization} token={token} organization={detail.organization} onClose={() => setEditingOrganization(false)} onSaved={() => { setEditingOrganization(false); void loadDetail(); }} />
+        <ContactFormSheet visible={addingContact} token={token} organization={detail.organization} onClose={() => setAddingContact(false)} onSaved={() => { setAddingContact(false); void loadDetail(); }} />
+      </> : null}
     </Screen>
   );
 }
@@ -1821,6 +1866,7 @@ function TextFieldForm(props: {
       <TextInput
         style={styles.formInput}
         value={props.value}
+        accessibilityLabel={props.label}
         onChangeText={props.onChangeText}
         placeholder={props.placeholder}
         placeholderTextColor={tokens.color.inkFaint}

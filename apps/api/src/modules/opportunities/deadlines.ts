@@ -4,6 +4,7 @@
 // (BR-016, BR-019).
 
 import { prisma } from "../../lib/prisma";
+import type { Prisma } from "../../../generated/prisma/client";
 import { DEADLINE_APPLICABLE_STAGES } from "@crm/core";
 
 export class DeadlineRejected extends Error {
@@ -29,71 +30,52 @@ export async function setProposalDeadline(input: {
   opportunityId: string;
   dueAt: Date;
   setById: string;
-}) {
-  const { opportunityId, dueAt, setById } = input;
+}, transaction?: Prisma.TransactionClient) {
+  const work = async (tx: Prisma.TransactionClient) => {
+    const { opportunityId, dueAt, setById } = input;
 
-  const opp = await prisma.opportunity.findUniqueOrThrow({
-    where: { id: opportunityId },
-    select: { id: true, stage: true, title: true, proposalSubmittedAt: true, proposalBreachedAt: true },
-  });
+    const opp = await tx.opportunity.findUniqueOrThrow({
+      where: { id: opportunityId },
+      select: { id: true, stage: true, title: true, proposalSubmittedAt: true, proposalBreachedAt: true },
+    });
 
-  if (!DEADLINE_APPLICABLE_STAGES.includes(opp.stage)) {
-    throw new DeadlineRejected(
-      `A drafting deadline only applies while a proposal is in progress. This deal is ${opp.stage}.`
-    );
-  }
+    if (!DEADLINE_APPLICABLE_STAGES.includes(opp.stage)) {
+      throw new DeadlineRejected(
+        `A drafting deadline only applies while a proposal is in progress. This deal is ${opp.stage}.`
+      );
+    }
 
-  // Re-dating a proposal that has already gone out would be rewriting a
-  // completed measurement, and the RAG indicator would then claim a
-  // submitted proposal is still counting down.
-  if (opp.proposalSubmittedAt) {
-    throw new DeadlineRejected("This proposal has already been submitted, so it no longer has a drafting deadline.");
-  }
+    // Re-dating a proposal that has already gone out would be rewriting a
+    // completed measurement, and the RAG indicator would then claim a
+    // submitted proposal is still counting down.
+    if (opp.proposalSubmittedAt) {
+      throw new DeadlineRejected("This proposal has already been submitted, so it no longer has a drafting deadline.");
+    }
 
-  // A deadline in the past would be flagged overdue by the very next sweep.
-  // Allowing that is how a typo silently destroys a live deal, so it is
-  // rejected here instead and the user picks today or later.
-  if (dueAt.getTime() < Date.now() - 60 * 1000) {
-    throw new DeadlineRejected("A drafting deadline cannot be in the past.");
-  }
+    // A deadline in the past would be flagged overdue by the very next sweep.
+    // Allowing that is how a typo silently destroys a live deal, so it is
+    // rejected here instead and the user picks today or later.
+    if (dueAt.getTime() < Date.now() - 60 * 1000) {
+      throw new DeadlineRejected("A drafting deadline cannot be in the past.");
+    }
 
-  const rearming = Boolean(opp.proposalBreachedAt);
-
-  return prisma.$transaction(async (tx) => {
+    const rearming = Boolean(opp.proposalBreachedAt);
     const updated = await tx.opportunity.update({
       where: { id: opportunityId },
       data: {
         proposalDueAt: dueAt,
         proposalDueSetById: setById,
         proposalDueSetAt: new Date(),
-        // Re-arming the clock on a breached deal: if the assignee is picking
-        // the work back up, a fresh deadline is legitimate, and the old breach
-        // record is cleared so the deal is not simultaneously "recovered" and
-        // "flagged as failed". The stage change itself is still a manual,
-        // reasoned decision by the owner.
-        ...(rearming
-          ? { stage: "PROPOSAL" as const, proposalBreachedAt: null, breachNoteRequired: false, breachNoteDueAt: null, breachNoteClearedAt: null }
-          : {}),
+        // A revised date does not discharge the explanation owed or move
+        // the deal past the proposal completeness gate. Recovery is a separate,
+        // reasoned stage change; the missed-deadline reminder stays actionable.
+        ...(rearming ? { proposalBreachedAt: null } : {}),
       },
     });
 
-    // Re-arming discharges the missed-deadline debt, so close the reminder the
-    // sweep raised rather than leaving it stranded on the assignee's list
-    // forever (it was only ever closable by a breach-note that re-arming has
-    // just made unnecessary).
-    if (rearming) {
-      await tx.followup.updateMany({
-        where: {
-          opportunityId,
-          status: "PENDING",
-          note: { contains: "was not submitted by its BD deadline" },
-        },
-        data: { status: "COMPLETED", completedAt: new Date() },
-      });
-    }
-
     return updated;
-  });
+  };
+  return transaction ? work(transaction) : prisma.$transaction(work, { isolationLevel: "Serializable" });
 }
 
 /** Removes a deadline entirely — the legitimate "no deadline was needed" case. */
@@ -134,35 +116,30 @@ export async function recordBreachExplanation(input: {
   opportunityId: string;
   authorId: string;
   explanation: string;
-}) {
-  const { opportunityId, authorId, explanation } = input;
+}, transaction?: Prisma.TransactionClient) {
+  const work = async (tx: Prisma.TransactionClient) => {
+    const { opportunityId, authorId, explanation } = input;
 
-  if (!explanation || !explanation.trim()) {
-    throw new DeadlineRejected("An explanation is required.");
-  }
+    if (!explanation || !explanation.trim()) {
+      throw new DeadlineRejected("An explanation is required.");
+    }
 
-  const opp = await prisma.opportunity.findUniqueOrThrow({
-    where: { id: opportunityId },
-    select: { id: true, title: true, ownerId: true, breachNoteRequired: true, breachNoteClearedAt: true, proposalBreachedAt: true },
-  });
+    const opp = await tx.opportunity.findUniqueOrThrow({
+      where: { id: opportunityId },
+      select: { id: true, title: true, ownerId: true, breachNoteRequired: true, breachNoteClearedAt: true, proposalBreachedAt: true },
+    });
 
-  // Idempotent-ish: re-submitting an explanation updates it rather than
-  // stacking duplicates, but a deal that neither carries the breach marker nor
-  // still owes the note cannot acquire an explanation, which would be a
-  // fabricated record. The `breachNoteRequired` clause is what keeps the debt
-  // closable after a recovery has already nulled proposalBreachedAt — otherwise
-  // the assignee is told they owe an explanation the system then refuses.
-  if (!opp.proposalBreachedAt && !opp.breachNoteRequired) {
-    throw new DeadlineRejected("This opportunity was never flagged as not submitted.");
-  }
+    // Only a real missed deadline may acquire an explanation. An outstanding
+    // explanation remains actionable after recovery clears the breach marker.
+    if (!opp.proposalBreachedAt && !opp.breachNoteRequired) {
+      throw new DeadlineRejected("This opportunity was never flagged as not submitted.");
+    }
 
-  if (opp.breachNoteClearedAt) {
-    throw new DeadlineRejected("An explanation has already been recorded for this deadline.");
-  }
+    if (opp.breachNoteClearedAt) {
+      throw new DeadlineRejected("An explanation has already been recorded for this deadline.");
+    }
 
-  const trimmed = explanation.trim();
-
-  return prisma.$transaction(async (tx) => {
+    const trimmed = explanation.trim();
     const note = await tx.note.create({
       data: {
         body: `Missed proposal deadline — ${trimmed}`,
@@ -191,5 +168,6 @@ export async function recordBreachExplanation(input: {
     });
 
     return { opportunity: updated, note };
-  });
+  };
+  return transaction ? work(transaction) : prisma.$transaction(work, { isolationLevel: "Serializable" });
 }

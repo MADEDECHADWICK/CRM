@@ -19,16 +19,15 @@ import {
   BUSINESS_TYPES,
   RAG_LABELS,
   ragFor,
-  canCreateOpportunity,
   type Stage,
 } from "@crm/core";
 import {
-  resolveOwnerForCreation,
-  recordInitialOwnership,
   reassignOpportunity,
   OwnershipRejected,
 } from "./ownership";
-import { paginationSchema, pageOf, MAX_LIMIT } from "../../lib/pagination";
+import { paginationSchema } from "../../lib/pagination";
+import { listPipeline } from "./pipeline";
+import { createOpportunity } from "./createOpportunity";
 
 export const opportunitiesRouter = Router();
 opportunitiesRouter.use(requireAuth);
@@ -60,6 +59,7 @@ function withRag<T extends {
 // stage is immediately valid here instead of being rejected with a 400.
 const listQuerySchema = z
   .object({
+    paginated: z.enum(["true", "false"]).optional(),
     stage: z.enum(STAGES).optional(),
     rag: z.enum(["NO_DEADLINE", "GREEN", "AMBER", "RED", "OVERDUE", "SUBMITTED"]).optional(),
     q: z.string().optional(),
@@ -86,10 +86,10 @@ const transitionBodySchema = z.object({
 // Deliberately narrower than the full stage list: a new opportunity can only
 // start life as a PROSPECT or a LEAD (BR-003/BR-004).
 const createBodySchema = z.object({
-  title: z.string().min(1),
+  title: z.string().trim().min(1),
   organizationId: z.string().uuid(),
   departmentId: z.string().uuid(),
-  service: z.string().min(1),
+  service: z.string().trim().min(1),
   amount: z.number().positive().optional(),
   currency: z.string().optional(),
   // Optional on the wire but never optional in the database: omitted means
@@ -138,7 +138,7 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
     });
   }
 
-  const { stage, rag, q, period, from, to, ownerId, departmentId } = query.data;
+  const { period, from, to } = query.data;
   let range: { from: Date; to: Date } | null = null;
   if (period === "custom") {
     const resolved = customReportRange(from, to);
@@ -153,54 +153,10 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
     range = reportPeriodRange(period);
   }
 
-  // A Manager's scope is "their own deals" — an explicit ownerId filter is
-  // honored only for roles that can see everything, so a Manager can't lift
-  // their blindfold; departmentId narrows within whatever scope applies.
-  const canFilterOwner = req.user!.role !== "MANAGER";
-
-  // RAG is computed in JS, so a `?rag=` filter cannot be pushed into SQL. If it
-  // were applied after DB pagination the filtered view would be incomplete
-  // (only the first page's worth of rows would ever be classified). So when a
-  // RAG filter is requested we load a bounded candidate set, classify it, then
-  // paginate in memory. The cap is deliberate — a RAG-filtered view is a
-  // working shortlist, not the whole book.
-  const wantsRag = Boolean(rag);
-  const page = pageOf(query.data);
-  const paging = wantsRag ? { take: MAX_LIMIT, skip: 0 } : { take: page.take, skip: page.skip };
-
-  const opps = await prisma.opportunity.findMany({
-    where: {
-      ...opportunityScope(req.user),
-      ...(stage ? { stage } : {}),
-      ...(range
-        ? { stageEnteredAt: { gte: range.from, lte: range.to } }
-        : {}),
-      ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),
-      ...(ownerId && canFilterOwner ? { ownerId } : {}),
-      ...(departmentId ? { departmentId } : {}),
-    },
-    include: {
-      // Only the fields the pipeline list renders — the full organization row
-      // (address/website/description) was being shipped per deal for nothing.
-      organization: { select: { id: true, name: true } },
-      department: { include: { head: { select: { id: true, name: true, role: true } } } },
-      owner: { select: { id: true, name: true } },
-    },
-    orderBy: { stageEnteredAt: "desc" },
-    ...paging,
-  });
-
-  // Filtered and decorated here rather than in the query. RAG depends on
-  // "now" in a way SQL cannot express identically across time zones and
-  // timezone-agnostic columns, so the database returns the candidate set and
-  // one shared function decides the colour.
-  const decorated = opps.map(withRag);
-  const filtered = rag ? decorated.filter((o) => o.rag.status === rag) : decorated;
-
-  // When RAG was filtered, pagination happens over the classified rows above.
-  const result = wantsRag ? filtered.slice(page.skip, page.skip + page.take) : filtered;
-
-  res.json({ success: true, data: result });
+  const result = await prisma.$transaction(tx => listPipeline(tx, req.user!, {
+    ...query.data, paginated: query.data.paginated === "true",
+  }, range), { isolationLevel: "RepeatableRead" });
+  res.json({ success: true, data: query.data.paginated === "true" ? result : result.items });
 });
 
 // Opportunity detail — the screen behind every transition/reassignment/
@@ -294,83 +250,13 @@ opportunitiesRouter.post("/", async (req: AuthedRequest, res) => {
     });
   }
 
-  // Role is checked against the shared policy rather than inferred from the
-  // fact that the request is authenticated. Every current role may raise a
-  // deal, so this never rejects anybody today — which is the point. The old
-  // code had no check at all, and the rule it was missing existed only as a
-  // hidden button in the mobile UI, where a POST from anywhere else was
-  // accepted. When a fourth role is added it will be denied here by default
-  // instead of inheriting a permission nobody granted.
-  if (!canCreateOpportunity(req.user!.role)) {
-    return res.status(403).json({
-      success: false,
-      error: {
-        code: "CREATOR_NOT_PERMITTED",
-        message: "Your role cannot raise new opportunities.",
-      },
-    });
-  }
-
-  // Resolves the owner, defaults to the department head, and refuses a
-  // deviation that comes without a reason. This replaces the previous
-  // `ownerId ?? req.user!.id` fallback, which let a Marketing & BD user become
-  // the owner of their own deal by omitting the field — the exact thing the
-  // Partner/Manager owner rule exists to prevent, reachable through a
-  // one-character omission.
-  let owner: { ownerId: string; departmentHeadId: string | null };
   try {
-    owner = await resolveOwnerForCreation({
-      departmentId: parsed.data.departmentId,
-      requestedOwnerId: parsed.data.ownerId,
-      overrideReason: parsed.data.ownerOverrideReason,
-    });
-  } catch (err: any) {
-    if (err instanceof OwnershipRejected) {
-      return res.status(err.status).json({
-        success: false,
-        error: { code: err.code, message: err.message, field: err.field },
-      });
-    }
-    throw err;
+    const opp = await prisma.$transaction(tx => createOpportunity(tx, req.user!, parsed.data), { isolationLevel: "Serializable" });
+    res.status(201).json({ success: true, data: withRag(opp) });
+  } catch (error) {
+    if (error instanceof OwnershipRejected) return res.status(error.status).json({ success: false, error: { code: error.code, message: error.message, field: error.field } });
+    throw error;
   }
-
-  // The deal and the first entry of its ownership history are committed
-  // together. A deal whose history starts somewhere other than its creation is
-  // exactly the gap the OwnerChange table was added to close.
-  const opp = await prisma.$transaction(async (tx) => {
-    const created = await tx.opportunity.create({
-      data: {
-        title: parsed.data.title,
-        organizationId: parsed.data.organizationId,
-        departmentId: parsed.data.departmentId,
-        service: parsed.data.service,
-        stage: parsed.data.stage ?? "LEAD",
-        amount: parsed.data.amount ?? null,
-        currency: parsed.data.currency ?? "KES",
-        createdById: req.user!.id,
-        ownerId: owner.ownerId,
-        stageEnteredAt: new Date(),
-        leadSource: parsed.data.leadSource,
-        leadSourceNote: parsed.data.leadSourceNote?.trim() || null,
-        leadReceivedAt: parsed.data.leadReceivedAt
-          ? new Date(parsed.data.leadReceivedAt)
-          : new Date(),
-      },
-      include: { organization: true, department: true },
-    });
-
-    await recordInitialOwnership(tx, {
-      opportunityId: created.id,
-      ownerId: owner.ownerId,
-      changedById: req.user!.id,
-      departmentHeadId: owner.departmentHeadId,
-      overrideReason: parsed.data.ownerOverrideReason,
-    });
-
-    return created;
-  });
-
-  res.status(201).json({ success: true, data: withRag(opp) });
 });
 
 opportunitiesRouter.post("/:id/transition", async (req: AuthedRequest, res) => {

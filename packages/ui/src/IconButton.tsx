@@ -36,6 +36,7 @@ export function IconButton({
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
       accessibilityLabel={label}
       hitSlop={6}
       style={({ pressed }) => [
@@ -60,6 +61,7 @@ export function Fab({ name, onPress, label }: FabProps) {
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
       accessibilityLabel={label}
       style={({ pressed }) => [
         styles.fab,

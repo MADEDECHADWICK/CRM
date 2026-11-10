@@ -35,6 +35,7 @@
 // it is a safety net rather than the intended production answer.
 
 import { prisma } from "../../lib/prisma";
+import type { Prisma } from "../../../generated/prisma/client";
 import { isProposalOverdue, BREACHABLE_STAGES, ragFor } from "@crm/core";
 
 /**
@@ -57,15 +58,88 @@ export type SweepResult = {
   noop: boolean;
 };
 
-/**
- * Moves every overdue, unsubmitted proposal to NOT_SUBMITTED and raises the
- * note debt.
- *
- * Safe to call repeatedly. The query only selects deals that are still in a
- * breachable stage, so a deal already swept is not selected again — the
- * idempotency comes from the data, not from bookkeeping, which means it
- * survives a process restart mid-sweep.
- */
+/** Atomically flags one overdue deal, once, with its history and reminder. */
+export async function flagOverdueProposal(tx: Prisma.TransactionClient, opportunityId: string, now: Date): Promise<boolean> {
+  // Re-read inside the transaction. Between the SELECT above and this
+  // write, a person may have submitted the proposal — and a job must
+  // never be the reason a real submission is overwritten.
+  const fresh = await tx.opportunity.findUnique({ where: { id: opportunityId } });
+  if (
+    !fresh ||
+    !BREACHABLE_STAGES.includes(fresh.stage) ||
+    fresh.proposalSubmittedAt ||
+    !fresh.proposalDueAt ||
+    fresh.proposalDueAt >= now
+  ) {
+    return false;
+  }
+
+  const noteDueAt = new Date(now.getTime() + BREACH_NOTE_DUE_DAYS * 86400000);
+  const rag = ragFor(fresh, now);
+  // The conditional claim makes the sweep idempotent under concurrency:
+  // only the runner that finds proposalBreachedAt still null wins. Two
+  // concurrent sweeps previously each passed the findUnique above and
+  // both wrote — duplicate history and duplicate reminders. PostgreSQL
+  // re-checks the predicate after resolving the row lock, so the loser
+  // matches zero rows.
+  const claimed = await tx.opportunity.updateMany({
+    where: {
+      id: opportunityId,
+      stage: { in: [...BREACHABLE_STAGES] },
+      proposalSubmittedAt: null,
+      proposalBreachedAt: null,
+      proposalDueAt: { lt: now },
+    },
+    data: {
+      stage: "NOT_SUBMITTED",
+      stageEnteredAt: now,
+      proposalBreachedAt: now,
+      breachNoteRequired: true,
+      breachNoteDueAt: noteDueAt,
+      breachNoteClearedAt: null,
+    },
+  });
+  if (claimed.count === 0) return false;
+
+  // The system is the actor here, not a person — ActorType.SYSTEM plus
+  // a systemReason is what keeps this transition as auditable as a
+  // manual one instead of being an unexplained gap in the history.
+  await tx.stageHistoryEntry.create({
+    data: {
+      opportunityId,
+      fromStage: fresh.stage,
+      toStage: "NOT_SUBMITTED",
+      changedById: null,
+      actorType: "SYSTEM",
+      reason: null,
+      systemReason:
+        `BD drafting deadline of ${fresh.proposalDueAt.toISOString().slice(0, 10)} ` +
+        `passed with nothing submitted (${rag.daysRemaining} days overdue).`,
+    },
+  });
+
+  // The debt becomes a real reminder on the assignee's own list rather
+  // than a column nobody looks at. Assigned to the owner when there is
+  // one; a deal with no owner is escalated in the reporting view
+  // instead, which is the more urgent problem anyway.
+  const assigneeId = fresh.ownerId;
+  if (assigneeId) {
+    await tx.followup.create({
+      data: {
+        note: `Explain why "${fresh.title}" was not submitted by its BD deadline`,
+        type: "CALL",
+        dueAt: noteDueAt,
+        opportunityId: fresh.id,
+        assignedToId: assigneeId,
+        createdById: assigneeId,
+      },
+    });
+  }
+
+  return true;
+}
+
+/** Selects overdue, unsubmitted proposals and processes each independently. */
 export async function sweepOverdueProposals(now: Date = new Date()): Promise<SweepResult> {
   // Over-fetch a little past the boundary rather than trusting a rounding
   // boundary to land exactly. isProposalOverdue() then makes the final call
@@ -98,7 +172,6 @@ export async function sweepOverdueProposals(now: Date = new Date()): Promise<Swe
     )
   );
 
-  const noteDueAt = new Date(now.getTime() + BREACH_NOTE_DUE_DAYS * 24 * 60 * 60 * 1000);
   const breached: string[] = [];
 
   // One row must never be able to abandon the rest. A single transaction that
@@ -109,89 +182,9 @@ export async function sweepOverdueProposals(now: Date = new Date()): Promise<Swe
   const failures: string[] = [];
 
   for (const row of trulyOverdue) {
-    const rag = ragFor(
-      { stage: row.stage, proposalDueAt: row.proposalDueAt, proposalSubmittedAt: null },
-      now
-    );
 
     try {
-      const flagged = await prisma.$transaction(async (tx) => {
-        // Re-read inside the transaction. Between the SELECT above and this
-        // write, a person may have submitted the proposal — and a job must
-        // never be the reason a real submission is overwritten.
-        const fresh = await tx.opportunity.findUnique({ where: { id: row.id } });
-        if (
-          !fresh ||
-          !BREACHABLE_STAGES.includes(fresh.stage) ||
-          fresh.proposalSubmittedAt ||
-          !fresh.proposalDueAt ||
-          fresh.proposalDueAt >= now
-        ) {
-          return false;
-        }
-
-        // The conditional claim makes the sweep idempotent under concurrency:
-        // only the runner that finds proposalBreachedAt still null wins. Two
-        // concurrent sweeps previously each passed the findUnique above and
-        // both wrote — duplicate history and duplicate reminders. PostgreSQL
-        // re-checks the predicate after resolving the row lock, so the loser
-        // matches zero rows.
-        const claimed = await tx.opportunity.updateMany({
-          where: {
-            id: row.id,
-            stage: { in: [...BREACHABLE_STAGES] },
-            proposalSubmittedAt: null,
-            proposalBreachedAt: null,
-            proposalDueAt: { lt: now },
-          },
-          data: {
-            stage: "NOT_SUBMITTED",
-            stageEnteredAt: now,
-            proposalBreachedAt: now,
-            breachNoteRequired: true,
-            breachNoteDueAt: noteDueAt,
-            breachNoteClearedAt: null,
-          },
-        });
-        if (claimed.count === 0) return false;
-
-        // The system is the actor here, not a person — ActorType.SYSTEM plus
-        // a systemReason is what keeps this transition as auditable as a
-        // manual one instead of being an unexplained gap in the history.
-        await tx.stageHistoryEntry.create({
-          data: {
-            opportunityId: row.id,
-            fromStage: fresh.stage,
-            toStage: "NOT_SUBMITTED",
-            changedById: null,
-            actorType: "SYSTEM",
-            reason: null,
-            systemReason:
-              `BD drafting deadline of ${fresh.proposalDueAt.toISOString().slice(0, 10)} ` +
-              `passed with nothing submitted (${rag.daysRemaining} days overdue).`,
-          },
-        });
-
-        // The debt becomes a real reminder on the assignee's own list rather
-        // than a column nobody looks at. Assigned to the owner when there is
-        // one; a deal with no owner is escalated in the reporting view
-        // instead, which is the more urgent problem anyway.
-        const assigneeId = fresh.ownerId;
-        if (assigneeId) {
-          await tx.followup.create({
-            data: {
-              note: `Explain why "${fresh.title}" was not submitted by its BD deadline`,
-              type: "CALL",
-              dueAt: noteDueAt,
-              opportunityId: fresh.id,
-              assignedToId: assigneeId,
-              createdById: assigneeId,
-            },
-          });
-        }
-
-        return true;
-      });
+      const flagged = await prisma.$transaction(tx => flagOverdueProposal(tx, row.id, now));
 
       // Only counted when this run actually moved the deal. The re-read above
       // can legitimately decline, and reporting a decline as a breach would

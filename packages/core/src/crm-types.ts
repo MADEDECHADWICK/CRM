@@ -222,6 +222,12 @@ export type Followup = {
   organization?: Organization;
 };
 
+export type PipelinePage = {
+  items: Opportunity[];
+  total: number;
+  counts: Record<Stage | "all" | "overdue", number>;
+};
+
 export type ReportingSummary = {
   totalProspects: number;
   totalLeads: number;
@@ -349,6 +355,7 @@ export type OwnerChange = {
 };
 
 export type OpportunityDetail = Opportunity & {
+  followups?: Followup[];
   owner?: { id: string; name: string } | null;
   createdBy?: { id: string; name: string } | null;
   notes?: OpportunityNote[];

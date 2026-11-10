@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma";
+import type { Prisma } from "../../../generated/prisma/client";
 import {
   ALLOWED_TRANSITIONS,
   canTransition,
@@ -31,7 +32,7 @@ export class TransitionRejected extends Error {
   }
 }
 
-export async function transitionOpportunity(input: TransitionInput) {
+export async function transitionOpportunity(input: TransitionInput, transaction?: Prisma.TransactionClient) {
   const { opportunityId, toStage, changedById, reason, amount, revisitAt, lostReason, submissionType, businessType, signingPartnerId } = input;
 
   // Field-level validation before touching the database.
@@ -60,7 +61,7 @@ export async function transitionOpportunity(input: TransitionInput) {
     throw new TransitionRejected("Feedback due date must be in the future.");
   }
 
-  return prisma.$transaction(async (tx) => {
+  const work = async (tx: Prisma.TransactionClient) => {
     // Re-fetch and validate the state machine INSIDE the transaction, so a
     // concurrent edit can't slip an illegal transition through between the
     // check and the write.
@@ -110,6 +111,7 @@ export async function transitionOpportunity(input: TransitionInput) {
     // allowing a recovery would trap people in a stage they cannot leave,
     // which is the opposite of what the recoverable stage is for.
     const recovering = current.stage === "NOT_SUBMITTED" && toStage === "PROPOSAL";
+    const clearExpiredDeadline = recovering && current.proposalDueAt !== null && current.proposalDueAt <= now;
 
     // Review: the signing partner must be a real Partner.
     if (toStage === "WON" && signingPartnerId) {
@@ -137,10 +139,13 @@ export async function transitionOpportunity(input: TransitionInput) {
         // BR-016: the submission stamp. Never overwritten — the first send
         // is the one that matters for velocity, and a later revision
         // resubmission must not rewrite history.
-        proposalSubmittedAt: submittedNow ? now : current.proposalSubmittedAt,
+        proposalSubmittedAt: submittedNow && !current.proposalSubmittedAt ? now : current.proposalSubmittedAt,
         // Recovery clears the breach marker but not the obligation, for the
         // reason given above.
         proposalBreachedAt: recovering ? null : current.proposalBreachedAt,
+        // An already missed clock must not immediately breach the recovered
+        // draft again. A new future deadline, if issued, remains in force.
+        ...(clearExpiredDeadline ? { proposalDueAt: null, proposalDueSetAt: null, proposalDueSetById: null } : {}),
 
         // Review fields. Submission type is set when the proposal goes out;
         // business type and signing partner are set when it is won.
@@ -198,7 +203,8 @@ export async function transitionOpportunity(input: TransitionInput) {
     }
 
     return updated;
-  }, {
+  };
+  return transaction ? work(transaction) : prisma.$transaction(work, {
     // Serializable, not the default READ COMMITTED. The state-machine check
     // reads the current stage and the write commits a new one, so two
     // concurrent transitions of the same deal both saw the old stage and both

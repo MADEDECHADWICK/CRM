@@ -40,3 +40,42 @@ jobs:
 
       - name: Unit tests
         run: pnpm --filter api test
+
+      - name: Build web application
+        run: pnpm --filter web build
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Disposable CI database: never use production credentials for workflow tests.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: crm_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d crm_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/crm_ci
+      RUN_DB_INTEGRATION: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter api exec prisma generate
+      - run: pnpm --filter api exec prisma migrate deploy
+      - name: Verify CRM workflows against disposable Postgres
+        run: pnpm --filter api test

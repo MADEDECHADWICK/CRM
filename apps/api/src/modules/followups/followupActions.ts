@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma";
+import type { Prisma } from "../../../generated/prisma/client";
 import { followupScope, type AccessUser } from "../../lib/accessScope";
 
 type CreateFollowupInput = {
@@ -11,7 +12,7 @@ type CreateFollowupInput = {
   createdById: string;       // always the current user
 };
 
-export async function createFollowup(input: CreateFollowupInput) {
+export async function createFollowup(input: CreateFollowupInput, db: Prisma.TransactionClient = prisma) {
   if (!input.note || !input.note.trim()) {
     throw new Error("A note describing the follow-up is required.");
   }
@@ -19,7 +20,7 @@ export async function createFollowup(input: CreateFollowupInput) {
     throw new Error("Due date must be in the future.");
   }
 
-  return prisma.followup.create({
+  return db.followup.create({
     data: {
       note: input.note.trim(),
       type: input.type ?? "CALL",
@@ -53,8 +54,8 @@ export async function deleteFollowup(followupId: string, user: AccessUser) {
   return prisma.followup.delete({ where: { id: followupId, AND: [followupScope(user)] } });
 }
 
-export async function completeFollowup(followupId: string, user: AccessUser) {
-  const followup = await prisma.followup.findFirstOrThrow({
+export async function completeFollowup(followupId: string, user: AccessUser, db: Prisma.TransactionClient = prisma) {
+  const followup = await db.followup.findFirstOrThrow({
     where: { id: followupId, AND: [followupScope(user)] },
   });
 
@@ -64,7 +65,7 @@ export async function completeFollowup(followupId: string, user: AccessUser) {
     throw new Error("You can only complete a follow-up you created or are assigned to.");
   }
 
-  return prisma.followup.update({
+  return db.followup.update({
     where: { id: followupId, AND: [followupScope(user)] },
     data: { status: "COMPLETED", completedAt: new Date() },
   });

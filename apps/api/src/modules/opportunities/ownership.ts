@@ -1,5 +1,5 @@
 import { prisma } from "../../lib/prisma";
-import { opportunityScope } from "../../middleware/authorize";
+import { opportunityScope, organizationScope } from "../../lib/accessScope";
 import {
   canOwnOpportunity,
   canReassign,
@@ -26,6 +26,7 @@ export type OwnershipErrorCode =
   | "NO_DEFAULT_OWNER"
   | "UNKNOWN_USER"
   | "INVALID_OWNER"
+  | "INVALID_LEAD_DATE"
   | "OVERRIDE_REASON_REQUIRED"
   | "REASON_REQUIRED"
   | "NOT_PERMITTED"
@@ -60,6 +61,12 @@ export class OwnershipRejected extends Error {
   }
 }
 
+export async function assertOwnerCanAccessAccount(tx: Prisma.TransactionClient, ownerId: string, organizationId: string) {
+  const member = await tx.user.findUniqueOrThrow({ where: { id: ownerId }, select: { id: true, role: true, departmentId: true, headedDepartments: { select: { id: true } } } });
+  const canSee = await tx.organization.count({ where: { id: organizationId, AND: [organizationScope({ ...member, headedDepartmentIds: member.headedDepartments.map(d => d.id) })] } });
+  if (!canSee) throw new OwnershipRejected("INVALID_OWNER", "Assign this account to the owner or their department before assigning an opportunity to them.", { field: "ownerId" });
+}
+
 /**
  * Works out who should own a new deal.
  *
@@ -75,10 +82,10 @@ export async function resolveOwnerForCreation(input: {
   departmentId: string;
   requestedOwnerId?: string | undefined;
   overrideReason?: string | undefined;
-}): Promise<{ ownerId: string; departmentHeadId: string | null }> {
+}, db: Prisma.TransactionClient = prisma): Promise<{ ownerId: string; departmentHeadId: string | null }> {
   const { departmentId, requestedOwnerId, overrideReason } = input;
 
-  const department = await prisma.department.findUnique({
+  const department = await db.department.findUnique({
     where: { id: departmentId },
     select: {
       id: true,
@@ -107,7 +114,7 @@ export async function resolveOwnerForCreation(input: {
     );
   }
 
-  const owner = await prisma.user.findUnique({
+  const owner = await db.user.findUnique({
     where: { id: ownerId },
     select: { id: true, role: true },
   });
@@ -193,7 +200,7 @@ export async function reassignOpportunity(input: {
   newOwnerId: string;
   reason: string;
   actor: ReassignActor;
-}) {
+}, transaction?: Prisma.TransactionClient) {
   const { opportunityId, newOwnerId, reason, actor } = input;
 
   const trimmed = reason.trim();
@@ -205,7 +212,7 @@ export async function reassignOpportunity(input: {
     );
   }
 
-  return prisma.$transaction(async (tx) => {
+  const work = async (tx: Prisma.TransactionClient) => {
     // opportunityScope, not a bare lookup: a Manager may only act on deals they
     // own, and that has to hold here as well as on the list endpoints or the
     // scope rule becomes decorative.
@@ -213,6 +220,7 @@ export async function reassignOpportunity(input: {
       where: { id: opportunityId, ...opportunityScope(actor) },
       select: {
         id: true,
+        organizationId: true,
         ownerId: true,
         createdById: true,
         breachNoteRequired: true,
@@ -257,6 +265,8 @@ export async function reassignOpportunity(input: {
       );
     }
 
+    await assertOwnerCanAccessAccount(tx, newOwnerId, opp.organizationId);
+
     const updated = await tx.opportunity.update({
       where: { id: opportunityId },
       data: { ownerId: newOwnerId },
@@ -294,5 +304,6 @@ export async function reassignOpportunity(input: {
     }
 
     return updated;
-  });
+  };
+  return transaction ? work(transaction) : prisma.$transaction(work, { isolationLevel: "Serializable" });
 }

@@ -14,7 +14,8 @@ import {
 
 import {
   type Contact,
-  type Opportunity,
+  type PipelinePage,
+  STAGES,
   type ReportingSummary,
   formatAmount,
   tokens,
@@ -34,7 +35,7 @@ import {
   StatCard,
 } from "@crm/ui";
 
-import { countByStage, DonutChart, pipelineDonut } from "../components/charts";
+import { DonutChart, pipelineDonut } from "../components/charts";
 import { useAuth } from "../auth/AuthContext";
 import { apiFetch } from "../api";
 import { Alert } from "../lib/dialogs";
@@ -82,7 +83,7 @@ export function HomeScreen({ onOpenClient, onNavigate }: HomeScreenProps) {
   }
 
   const [summary, setSummary] = useState<ReportingSummary | null>(null);
-  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [pipelineCounts, setPipelineCounts] = useState<PipelinePage["counts"] | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactQuery, setContactQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -95,12 +96,12 @@ export function HomeScreen({ onOpenClient, onNavigate }: HomeScreenProps) {
     try {
       const [summaryData, opportunityData, contactData] = await Promise.all([
         apiFetch<ReportingSummary>("/reporting/summary", token),
-        apiFetch<Opportunity[]>("/opportunities", token),
+        apiFetch<PipelinePage>("/opportunities?paginated=true&limit=1", token),
         apiFetch<Contact[]>("/contacts?limit=500", token),
       ]);
 
       setSummary(summaryData);
-      setOpportunities(opportunityData);
+      setPipelineCounts(opportunityData.counts);
       setContacts(contactData);
       setError(null);
     } catch (err) {
@@ -125,10 +126,10 @@ export function HomeScreen({ onOpenClient, onNavigate }: HomeScreenProps) {
   }
 
   const pipeline = useMemo(() => {
-    const counts = countByStage(opportunities);
+    const counts = STAGES.map(stage => ({ stage, count: pipelineCounts?.[stage] ?? 0 }));
     const total = counts.reduce((sum, item) => sum + item.count, 0);
     return { counts, total };
-  }, [opportunities]);
+  }, [pipelineCounts]);
 
   // Idle state shows only a short preview — with 1000+ clients a full list
   // would be unusable on a phone. Searching is the way to find anyone else,
