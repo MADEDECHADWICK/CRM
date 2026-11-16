@@ -255,6 +255,7 @@ export type UserLite = {
   name: string;
   email: string;
   role: Role;
+  isAdmin: boolean;
   departmentId?: string | null;
   department?: Department | null;
   headedDepartments?: Pick<Department, "id" | "name">[];

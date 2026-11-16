@@ -16,7 +16,7 @@ departmentsRouter.use(requireAuth);
 // administers" has one definition rather than the several role comparisons
 // this codebase grew before the policy was centralised.
 function isBD(user: AuthedRequest["user"]): boolean {
-  return user ? canManageStaff(user.role) : false;
+  return user ? canManageStaff(user.role, user.isAdmin) : false;
 }
 
 const createSchema = z.object({

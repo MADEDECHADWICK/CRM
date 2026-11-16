@@ -16,7 +16,7 @@ usersRouter.use(requireAuth);
 // canManageStaff is the shared definition, so a role added later is covered
 // here without revisiting every screen that gates on it.
 function isBD(user: AuthedRequest["user"]): boolean {
-  return user ? canManageStaff(user.role) : false;
+  return user ? canManageStaff(user.role, user.isAdmin) : false;
 }
 
 
@@ -28,6 +28,7 @@ const createSchema = z.object({
   name: z.string().trim().min(1),
   email: z.string().trim().toLowerCase().email(),
   role: z.enum(["PARTNER", "MANAGER"]),
+  isAdmin: z.boolean().optional(),
   // Required, with a length floor. A shared hardcoded default password made
   // every new account login-able with a publicly known secret; the admin
   // setting the first password is the only safe default.
@@ -127,6 +128,7 @@ usersRouter.post("/", async (req: AuthedRequest, res) => {
       name: parsed.data.name,
       email,
       role: parsed.data.role,
+      isAdmin: parsed.data.isAdmin ?? false,
       passwordHash: bcrypt.hashSync(parsed.data.password, 10),
       departmentId: parsed.data.departmentId,
     },

@@ -61,8 +61,8 @@ export function canCreateOpportunity(role: Role): boolean {
  * it. Kept here rather than as a `role === "MARKETING_BD"` test at each call
  * site for the same reason as everything else in this file.
  */
-export function canManageStaff(role: Role): boolean {
-  return role === "MARKETING_BD";
+export function canManageStaff(role: Role, isAdmin = false): boolean {
+  return isAdmin || role === "MARKETING_BD";
 }
 
 /**

@@ -69,10 +69,12 @@ describe("ownership eligibility", () => {
     }
   });
 
-  test("only Marketing & BD administer the roster", () => {
+  test("only Marketing & BD or an appointed administrator administer the roster", () => {
     assert.equal(canManageStaff("MARKETING_BD"), true);
     assert.equal(canManageStaff("PARTNER"), false);
     assert.equal(canManageStaff("MANAGER"), false);
+    assert.equal(canManageStaff("PARTNER", true), true);
+    assert.equal(canManageStaff("MANAGER", true), true);
   });
 
   test("narrows to owner-eligible users without discarding other fields", () => {

@@ -1,7 +1,7 @@
 import type { Role } from "@crm/core";
 import type { Prisma } from "../../generated/prisma/client";
 
-export type AccessUser = { id: string; role: Role; departmentId?: string | null; headedDepartmentIds?: string[] };
+export type AccessUser = { id: string; role: Role; isAdmin?: boolean; departmentId?: string | null; headedDepartmentIds?: string[] };
 
 export function accessibleDepartmentIds(user: AccessUser): string[] {
   return [...new Set([...(user.departmentId ? [user.departmentId] : []), ...(user.headedDepartmentIds ?? [])])];

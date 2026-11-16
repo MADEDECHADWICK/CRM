@@ -26,6 +26,7 @@ type ScreenName =
 
 function buildScreens(user: {
   role: string;
+  isAdmin?: boolean;
 } | null) {
   return [
     { key: "HOME" as const, label: "Home", icon: IconSet.Home },
@@ -34,7 +35,7 @@ function buildScreens(user: {
     { key: "PIPELINE" as const, label: "Pipeline", icon: IconSet.Pipeline },
     { key: "FOLLOWUPS" as const, label: "Follow-ups", icon: IconSet.Bell },
     { key: "REPORTS" as const, label: "Reports", icon: IconSet.Chart },
-    ...(user?.role === "MARKETING_BD"
+    ...(user?.role === "MARKETING_BD" || user?.isAdmin
       ? [{ key: "TEAM" as const, label: "Team", icon: IconSet.Building }]
       : []),
   ];

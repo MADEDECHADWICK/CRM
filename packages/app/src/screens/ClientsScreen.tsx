@@ -77,7 +77,7 @@ function fmtDate(iso: string | null | undefined): string {
 
 export function ClientsScreen() {
   const { token, user } = useAuth();
-  const canManage = !!user && canManageStaff(user.role);
+  const canManage = !!user && canManageStaff(user.role, user.isAdmin);
   const [assignmentOrg, setAssignmentOrg] = useState<Organization | null>(null);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);

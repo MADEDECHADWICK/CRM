@@ -14,6 +14,7 @@ export function AppShell({ children, items, active, onSelect }: AppShellProps) {
   const { user, logout } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
   const initials = user?.name.split(/\s+/).filter(Boolean).slice(0, 2).map(n => n[0]).join("").toUpperCase();
+  const roleLabel = user?.isAdmin ? "Administrator" : user ? ROLES[user.role] : "";
   const current = items.find(i => i.key === active);
   const date = new Date().toLocaleDateString("en-KE", { weekday: "short", day: "numeric", month: "long", year: "numeric" });
   function signOut() {
@@ -38,7 +39,7 @@ export function AppShell({ children, items, active, onSelect }: AppShellProps) {
         <div className="crm-workspace-label"><span className="crm-workspace-dot" /> Ronalds Africa workspace</div>
         <button className="crm-account" onClick={() => setProfileOpen(true)} aria-label="Edit my profile">
           <span className="crm-avatar crm-avatar-dark">{initials}</span>
-          <span className="crm-account-details"><strong>{user?.name}</strong><small>{user && ROLES[user.role]}</small></span>
+          <span className="crm-account-details"><strong>{user?.name}</strong><small>{roleLabel}</small></span>
           <Icon name={IconSet.Options} size={18} color="#b0c1ce" />
         </button>
       </div>

@@ -2,6 +2,7 @@
 .crm-shell *, .crm-shell *::before, .crm-shell *::after { box-sizing: border-box; }
 .crm-shell button { font: inherit; cursor: pointer; }
 .crm-shell button:focus-visible, .crm-shell [role="button"]:focus-visible, .crm-shell [role="tab"]:focus-visible, .crm-shell input:focus-visible, .crm-shell textarea:focus-visible { outline: 3px solid #ef9d55; outline-offset: 3px; }
+#profile-form input:focus-visible, #profile-form textarea:focus-visible { outline: none; }
 .crm-shell button:disabled { cursor: default; }
 .crm-sidebar { display: flex; flex-direction: column; width: 256px; flex-shrink: 0; padding: 34px 18px 20px; color: white; background: radial-gradient(ellipse at 0 100%, #123d56 0, transparent 58%), #0b2844; border-right: 1px solid #183b55; }
 .crm-brand { display: flex; align-items: center; gap: 11px; padding: 0 6px 33px; border: 0; background: none; color: white; text-align: left; }

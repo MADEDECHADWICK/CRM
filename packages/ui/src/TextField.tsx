@@ -3,7 +3,9 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  type StyleProp,
   type TextInputProps,
+  type ViewStyle,
   View,
 } from "react-native";
 
@@ -13,29 +15,34 @@ type TextFieldProps = TextInputProps & {
   label: string;
   error?: string;
   right?: ReactNode;
+  variant?: "default" | "plain";
+  containerStyle?: StyleProp<ViewStyle>;
 };
 
 export function TextField({
   label,
   error,
   right,
+  variant = "default",
+  containerStyle,
   style,
   onFocus,
   onBlur,
   ...props
 }: TextFieldProps) {
   const [focused, setFocused] = useState(false);
+  const plain = variant === "plain";
   return (
-    <View style={styles.wrapper}>
-      <Text style={styles.label}>{label}</Text>
+    <View style={[styles.wrapper, plain && styles.wrapperPlain, containerStyle]}>
+      <Text style={[styles.label, plain && styles.labelPlain]}>{label}</Text>
 
-      <View style={[styles.inputRow, focused && styles.focused, error ? styles.inputRowError : undefined]}>
+      <View style={[styles.inputRow, plain && styles.inputRowPlain, focused && (plain ? styles.focusedPlain : styles.focused), error ? styles.inputRowError : undefined]}>
         <TextInput
           {...props}
           accessibilityLabel={props.accessibilityLabel ?? label}
           onFocus={event => { setFocused(true); onFocus?.(event); }}
           onBlur={event => { setFocused(false); onBlur?.(event); }}
-          style={[styles.input, style]}
+          style={[styles.input, plain && styles.inputPlain, style]}
           placeholderTextColor={tokens.color.inkFaint}
         />
 
@@ -52,11 +59,20 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
 
+  wrapperPlain: {
+    marginBottom: 0,
+  },
+
   label: {
     marginBottom: 7,
     fontSize: 13,
     fontWeight: "600",
     color: tokens.color.inkMuted,
+  },
+
+  labelPlain: {
+    marginBottom: 6,
+    fontSize: 12,
   },
 
   inputRow: {
@@ -70,6 +86,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
 
+  inputRowPlain: {
+    minHeight: 44,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+  },
+
   inputRowError: {
     borderColor: tokens.color.danger,
   },
@@ -81,6 +103,10 @@ const styles = StyleSheet.create({
     color: tokens.color.ink,
   },
 
+  inputPlain: {
+    fontSize: 14,
+  },
+
   right: {
     marginLeft: 10,
   },
@@ -88,6 +114,10 @@ const styles = StyleSheet.create({
   focused: {
     borderColor: tokens.color.brand,
     backgroundColor: tokens.color.brandFaint,
+  },
+
+  focusedPlain: {
+    borderColor: tokens.color.brand,
   },
 
   error: {

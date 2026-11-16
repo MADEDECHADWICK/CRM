@@ -1,9 +1,10 @@
 import type { Prisma } from "../../../generated/prisma/client";
+import { canManageStaff } from "@crm/core";
 import type { AccessUser } from "../../lib/accessScope";
 import { UserUpdateError } from "../users/userActions";
 
 export async function setDepartmentHead(tx: Prisma.TransactionClient, actor: AccessUser, departmentId: string, headId: string | null) {
-  if (actor.role !== "MARKETING_BD") throw new UserUpdateError(403, "FORBIDDEN", "Only Marketing & BD can appoint department heads.");
+  if (!canManageStaff(actor.role, actor.isAdmin)) throw new UserUpdateError(403, "FORBIDDEN", "Only administrators can appoint department heads.");
   const department = await tx.department.findUnique({ where: { id: departmentId }, select: { id: true } });
   if (!department) throw new UserUpdateError(404, "NOT_FOUND", "Department not found.");
   if (headId) {

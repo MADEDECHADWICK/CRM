@@ -7,6 +7,7 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from "react-native";
@@ -534,6 +535,9 @@ function MemberCard({
             {roleLine} · {deptLine}
           </Text>
           <Text style={styles.headBadge}>Assigned prospects: {assignedProspectCount}</Text>
+          {member?.isAdmin ? (
+            <Text style={styles.adminBadge}>Administrator</Text>
+          ) : null}
           {headsDepartmentName ? (
             <Text style={styles.headBadge}>
               Head of {headsDepartmentName}
@@ -756,6 +760,7 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<"PARTNER" | "MANAGER">("PARTNER");
   const [departmentId, setDepartmentId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function submit() {
@@ -782,6 +787,7 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
           name: name.trim(),
           email: email.trim(),
           role,
+          isAdmin,
           password,
           ...(departmentId ? { departmentId } : {}),
         }),
@@ -873,6 +879,19 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
             Create a department first, or leave unassigned.
           </Text>
         ) : null}
+      </View>
+
+      <View style={styles.switchRow}>
+        <View style={styles.switchText}>
+          <Text style={styles.formHintStrong}>Administrator access</Text>
+          <Text style={styles.memberMeta}>Can add members, manage departments and grant administrator access.</Text>
+        </View>
+        <Switch
+          value={isAdmin}
+          onValueChange={setIsAdmin}
+          trackColor={{ false: tokens.color.borderStrong, true: tokens.color.brand }}
+          thumbColor={tokens.color.surface}
+        />
       </View>
 
       <Button
@@ -1062,6 +1081,24 @@ const styles = StyleSheet.create({
     ...tokens.type.caption,
     fontWeight: "700",
     color: tokens.color.brand,
+  },
+
+  adminBadge: {
+    ...tokens.type.caption,
+    fontWeight: "700",
+    color: tokens.color.accentStrong,
+  },
+
+  switchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    marginBottom: 16,
+  },
+
+  switchText: {
+    flex: 1,
+    gap: 3,
   },
 
   pipelineRow: {

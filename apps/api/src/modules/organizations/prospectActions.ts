@@ -1,7 +1,7 @@
 import { canManageStaff, canCreateProspect, canReassignProspect, canReceiveProspect, isOwnerEligible, type Role } from "@crm/core";
 import type { Prisma } from "../../../generated/prisma/client";
 
-type Actor = { id: string; role: Role };
+type Actor = { id: string; role: Role; isAdmin?: boolean };
 
 export class ProspectError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -34,7 +34,7 @@ async function assignmentData(tx: Prisma.TransactionClient, actor: Actor, assign
 }
 
 export async function assignAccount(tx: Prisma.TransactionClient, actor: Actor, organizationId: string, assignedToId?: string | null, assignedDepartmentId?: string | null, kind?: "prospect" | "client") {
-  const admin = canManageStaff(actor.role);
+  const admin = canManageStaff(actor.role, actor.isAdmin);
   if (!admin && actor.role !== "PARTNER") throw new ProspectError(403, "FORBIDDEN", "Only administrators and Partners can assign prospects.");
   const where = { id: organizationId, ...(!admin ? { assignedToId: actor.id } : {}) };
   const org = await tx.organization.findUnique({ where,

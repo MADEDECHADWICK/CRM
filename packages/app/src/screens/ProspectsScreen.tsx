@@ -66,7 +66,7 @@ export function ProspectsScreen({
   onStartOpportunity,
 }: ProspectsScreenProps) {
   const { token, user } = useAuth();
-  const canManage = !!user && canManageStaff(user.role);
+  const canManage = !!user && canManageStaff(user.role, user.isAdmin);
   const canAdd = !!user && canCreateProspect(user.role);
 
   const scrollRef = useRef<ScrollView>(null);

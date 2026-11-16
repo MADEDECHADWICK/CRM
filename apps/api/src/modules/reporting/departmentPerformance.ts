@@ -1,4 +1,4 @@
-import { ACTIVE_PROPOSAL_STAGES, STAGES, toKes, type BreakdownRow, type Stage, type StageCounts } from "@crm/core";
+import { ACTIVE_PROPOSAL_STAGES, STAGES, toKes, canManageStaff, type BreakdownRow, type Stage, type StageCounts } from "@crm/core";
 import type { Prisma } from "../../../generated/prisma/client";
 import { opportunityScope, type AccessUser } from "../../lib/accessScope";
 import { UserUpdateError } from "../users/userActions";
@@ -15,7 +15,7 @@ function add(row: BreakdownRow, deal: { stage: Stage; amount: unknown; currency:
 }
 
 export async function departmentPerformance(tx: Prisma.TransactionClient, actor: AccessUser, memberId: string, range?: { from: Date; to: Date } | null) {
-  if (actor.role !== "MARKETING_BD" && actor.id !== memberId) throw new UserUpdateError(403, "FORBIDDEN", "You can view only your own department performance.");
+  if (!canManageStaff(actor.role, actor.isAdmin) && actor.id !== memberId) throw new UserUpdateError(403, "FORBIDDEN", "You can view only your own department performance.");
   const member = await tx.user.findUnique({ where: { id: memberId }, select: { id: true, name: true, role: true, departmentId: true, headedDepartments: { select: { id: true, name: true }, orderBy: { name: "asc" } } } });
   if (!member) throw new UserUpdateError(404, "NOT_FOUND", "Member not found.");
   const departmentIds = member.headedDepartments.map(d => d.id);

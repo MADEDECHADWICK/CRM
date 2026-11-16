@@ -37,14 +37,14 @@ export async function requireAuth(req: AuthedRequest, res: Response, next: NextF
   // lookup per request is the price of authority that is never stale.
   const user = await prisma.user.findUnique({
     where: { id: payload.id },
-    select: { id: true, role: true, departmentId: true, headedDepartments: { select: { id: true } } },
+    select: { id: true, role: true, isAdmin: true, departmentId: true, headedDepartments: { select: { id: true } } },
   });
 
   if (!user) {
     return res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED" } });
   }
 
-  req.user = { id: user.id, role: user.role, departmentId: user.departmentId, headedDepartmentIds: user.headedDepartments.map(d => d.id) };
+  req.user = { id: user.id, role: user.role, isAdmin: user.isAdmin, departmentId: user.departmentId, headedDepartmentIds: user.headedDepartments.map(d => d.id) };
   next();
 }
 

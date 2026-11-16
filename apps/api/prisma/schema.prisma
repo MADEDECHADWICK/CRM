@@ -186,6 +186,8 @@ model User {
   /// Role controls what type of access the user has in the CRM.
   role Role
 
+  isAdmin Boolean @default(false)
+
   /// Optional department association.
   ///
   /// This can support department-based visibility rules later.

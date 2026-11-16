@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import type { Prisma } from "../../../generated/prisma/client";
+import { canManageStaff } from "@crm/core";
 import type { AccessUser } from "../../lib/accessScope";
 
 const name = z.string().trim().min(1).max(200);
@@ -8,6 +9,7 @@ const email = z.string().trim().toLowerCase().email();
 export const staffUpdateSchema = z.object({
   name: name.optional(), email: email.optional(),
   role: z.enum(["PARTNER", "MANAGER"]).optional(),
+  isAdmin: z.boolean().optional(),
   departmentId: z.string().uuid().nullable().optional(),
 }).strict().refine(value => Object.keys(value).length > 0, "Provide details to update.");
 export const profileUpdateSchema = z.object({
@@ -17,7 +19,7 @@ export const profileUpdateSchema = z.object({
 }).strict().refine(value => value.name !== undefined || value.email !== undefined || value.newPassword !== undefined, "Provide details to update.");
 
 export const publicUserSelect = {
-  id: true, name: true, email: true, role: true, departmentId: true,
+  id: true, name: true, email: true, role: true, isAdmin: true, departmentId: true,
   department: { select: { id: true, name: true } },
   headedDepartments: { select: { id: true, name: true }, orderBy: { name: "asc" as const } },
 } as const;
@@ -28,7 +30,7 @@ export class UserUpdateError extends Error {
 
 // The same service powers HTTP and rollback-only integration verification.
 export async function updateUser(tx: Prisma.TransactionClient, actor: AccessUser, id: string, input: unknown, self = false) {
-  if (self ? id !== actor.id : actor.role !== "MARKETING_BD") {
+  if (self ? id !== actor.id : !canManageStaff(actor.role, actor.isAdmin)) {
     throw new UserUpdateError(403, "FORBIDDEN", "You cannot edit this member.");
   }
   const user = await tx.user.findUnique({ where: { id }, include: { headedDepartments: { select: { id: true } } } });
@@ -49,6 +51,10 @@ export async function updateUser(tx: Prisma.TransactionClient, actor: AccessUser
   } else {
     const values = staffUpdateSchema.parse(input);
     if (user.role === "MARKETING_BD" && values.role !== undefined) throw new UserUpdateError(400, "ADMIN_ROLE_PROTECTED", "The administrator role cannot be changed here.");
+    if (values.isAdmin === false && user.isAdmin) {
+      const remainingAdmins = await tx.user.count({ where: { isAdmin: true, id: { not: id } } });
+      if (remainingAdmins === 0) throw new UserUpdateError(409, "LAST_ADMIN", "At least one administrator must remain.");
+    }
     if (values.departmentId && !await tx.department.findUnique({ where: { id: values.departmentId }, select: { id: true } })) {
       throw new UserUpdateError(400, "INVALID_DEPARTMENT", "Department not found.");
     }
