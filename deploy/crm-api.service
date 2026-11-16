@@ -1,0 +1,19 @@
+[Unit]
+Description=CRM API
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=crm
+Group=crm
+WorkingDirectory=/srv/crm
+EnvironmentFile=/etc/crm/api.env
+ExecStart=/usr/bin/env pnpm --filter api start
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
