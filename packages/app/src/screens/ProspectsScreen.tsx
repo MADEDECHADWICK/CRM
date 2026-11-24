@@ -17,7 +17,6 @@ import {
   canManageStaff,
   canCreateProspect,
   canReassignProspect,
-  canCreateOpportunity,
 } from "@crm/core";
 
 import {
@@ -57,13 +56,11 @@ type ProspectsScreenProps = {
   focusOrganizationId?: string | null;
   /** Called once the focus has been applied, so it can be cleared upstream. */
   onFocusHandled?: () => void;
-  onStartOpportunity?: (organization: Organization) => void;
 };
 
 export function ProspectsScreen({
   focusOrganizationId = null,
   onFocusHandled,
-  onStartOpportunity,
 }: ProspectsScreenProps) {
   const { token, user } = useAuth();
   const canManage = !!user && canManageStaff(user.role, user.isAdmin);
@@ -367,10 +364,6 @@ export function ProspectsScreen({
 
                 {expanded ? (
                   <View style={styles.detail}>
-                    {user && canCreateOpportunity(user.role) && onStartOpportunity ? <Button
-                      title="Start opportunity" icon={IconSet.Pipeline} size="sm"
-                      onPress={() => onStartOpportunity(organization)}
-                    /> : null}
                     <OrganizationSourceDetails organization={organization} />
                     <Text style={styles.detailHeading}>
                       Contact information

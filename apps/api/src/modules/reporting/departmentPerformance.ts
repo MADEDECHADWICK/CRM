@@ -4,14 +4,26 @@ import { opportunityScope, type AccessUser } from "../../lib/accessScope";
 import { UserUpdateError } from "../users/userActions";
 
 function emptyRow(id: string, name: string): BreakdownRow {
-  return { id, name, counts: Object.fromEntries(STAGES.map(s => [s, 0])) as StageCounts, wonCount: 0, wonValue: 0, lostCount: 0, lostValue: 0, activeProposalValue: 0 };
+  return { id, name, counts: Object.fromEntries(STAGES.map(s => [s, 0])) as StageCounts, wonCount: 0, wonValue: 0, lostCount: 0, lostValue: 0, activeProposalValue: 0, unavailableValueCount: 0 };
 }
-function add(row: BreakdownRow, deal: { stage: Stage; amount: unknown; currency: string }) {
+function add(row: BreakdownRow, deal: {
+  stage: Stage;
+  amount: unknown;
+  confirmedAwardValue?: unknown;
+  submittedFee?: unknown;
+  approvedQuotedFee?: unknown;
+  estimatedValue?: unknown;
+  currency: string;
+}) {
   row.counts[deal.stage]++;
-  const value = toKes(Number(deal.amount ?? 0), deal.currency);
-  if (deal.stage === "WON") { row.wonCount++; row.wonValue += value; }
-  if (deal.stage === "LOST") { row.lostCount++; row.lostValue += value; }
-  if (ACTIVE_PROPOSAL_STAGES.includes(deal.stage)) row.activeProposalValue += value;
+  const raw = deal.stage === "WON"
+    ? deal.confirmedAwardValue ?? deal.amount
+    : deal.submittedFee ?? deal.approvedQuotedFee ?? deal.estimatedValue ?? deal.amount;
+  const value = raw == null ? null : toKes(Number(raw), deal.currency);
+  if (value == null && raw != null) row.unavailableValueCount = (row.unavailableValueCount ?? 0) + 1;
+  if (deal.stage === "WON") { row.wonCount++; if (value != null) row.wonValue += value; }
+  if (deal.stage === "LOST") { row.lostCount++; if (value != null) row.lostValue += value; }
+  if (ACTIVE_PROPOSAL_STAGES.includes(deal.stage) && value != null) row.activeProposalValue += value;
 }
 
 export async function departmentPerformance(tx: Prisma.TransactionClient, actor: AccessUser, memberId: string, range?: { from: Date; to: Date } | null) {
@@ -25,14 +37,14 @@ export async function departmentPerformance(tx: Prisma.TransactionClient, actor:
   const periodWhere = range ? { stageEnteredAt: { gte: range.from, lte: range.to } } : {};
   const personalDeals = await tx.opportunity.findMany({
     where: { AND: [scope, { ownerId: member.id }, periodWhere] },
-    select: { stage: true, amount: true, currency: true },
+    select: { stage: true, amount: true, confirmedAwardValue: true, submittedFee: true, approvedQuotedFee: true, estimatedValue: true, currency: true },
   });
   // Leadership authorizes department aggregates, not private account details.
   // Otherwise a member-only account assignment silently understates the head's
   // department totals. No account identities leave this service.
   const departmentDeals = await tx.opportunity.findMany({
     where: { departmentId: { in: departmentIds }, ...periodWhere },
-    select: { departmentId: true, stage: true, amount: true, currency: true },
+    select: { departmentId: true, stage: true, amount: true, confirmedAwardValue: true, submittedFee: true, approvedQuotedFee: true, estimatedValue: true, currency: true },
   });
   const personal = emptyRow(member.id, "Personally owned deals");
   const combined = emptyRow("combined", "All departments headed");

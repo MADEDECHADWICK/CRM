@@ -22,6 +22,10 @@ enum Role {
   MARKETING_BD
   PARTNER
   MANAGER
+  PROPOSAL_COORDINATOR
+  TECHNICAL_REVIEWER
+  COUNTRY_LEAD
+  IT_ADMIN
 }
 
 /// Represents the lifecycle stage of an opportunity.
@@ -62,8 +66,20 @@ enum Stage {
   /// The opportunity was successfully converted into business.
   WON
 
-  /// The opportunity was unsuccessful.
+  /// The opportunity was unsuccessful in a competitive decision.
   LOST
+
+  /// The opportunity was withdrawn by the firm before a competitive outcome.
+  WITHDRAWN
+
+  /// The client cancelled the requirement.
+  CLIENT_CANCELLED
+
+  /// The tender concluded without an award.
+  NO_AWARD
+
+  /// The firm decided not to bid.
+  NO_BID
 
   /// The organization has not provided a response.
   NO_REPLY
@@ -142,6 +158,8 @@ enum FollowupType {
   CALL
   EMAIL
   MEETING
+  TASK
+  HANDOVER
 }
 
 /// How a proposal was submitted to the client.
@@ -161,8 +179,168 @@ enum SubmissionType {
 /// makes "client acquisition" and "account expansion" reportable.
 enum BusinessType {
   NEW_BUSINESS
+  RENEWAL
   CROSS_SELL
   UPSELL
+}
+
+/// Commercial outcome of an opportunity, deliberately separate from the
+/// legacy Stage and from ProposalStatus. A proposal can be Submitted while the
+/// opportunity is Won, so these three facts cannot share one enum.
+enum OpportunityOutcome {
+  OPEN
+  ON_HOLD
+  WON
+  LOST
+  WITHDRAWN
+  CLIENT_CANCELLED
+  NO_AWARD
+  NO_BID
+  NO_RESPONSE
+}
+
+enum QualificationStatus {
+  UNQUALIFIED
+  QUALIFIED
+  NO_GO
+  DISQUALIFIED
+}
+
+enum LossReasonCode {
+  PRICE_FEES
+  TECHNICAL_SCORE
+  EXPERIENCE_CREDENTIALS
+  RELATIONSHIP_INCUMBENT
+  SCOPE_MISMATCH
+  PROCUREMENT_COMPLIANCE
+  OTHER
+  NOT_SUPPLIED
+}
+
+enum ProposalStatus {
+  PENDING_INPUTS
+  IN_PREPARATION
+  IN_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  SUBMITTED
+  NOT_SUBMITTED
+}
+
+/// Explicit proposal workflow between the team lead, BD owner and Partner.
+enum ProposalWorkflowStage {
+  TECHNICAL_PREPARATION
+  BD_QUALITY_REVIEW
+  RETURNED_TO_TECHNICAL
+  PARTNER_SIGNOFF
+  APPROVED_FOR_SUBMISSION
+  SUBMITTED
+}
+
+enum ChecklistVersionStatus {
+  DRAFT
+  ACTIVE
+  RETIRED
+}
+
+enum ChecklistItemStatus {
+  PENDING
+  COMPLETE
+  REVIEWED
+  NOT_APPLICABLE
+  BLOCKED
+}
+
+enum ApprovalKind {
+  REVIEW
+  APPROVAL
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+  INVALIDATED
+}
+
+enum CredentialStatus {
+  ACTIVE
+  EXPIRING
+  EXPIRED
+  REVOKED
+  PENDING
+}
+
+enum PrequalificationStatus {
+  DRAFT
+  PENDING_INPUTS
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+  EXPIRED
+}
+
+enum AllocationBasis {
+  PERCENT
+  AMOUNT
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  APPROVE
+  REJECT
+  REASSIGN
+  ARCHIVE
+  RESTORE
+  DISABLE
+  MERGE
+  EXPORT
+  SUBMIT
+  INVALIDATE
+  QUALIFY
+  OUTCOME
+  HANDOVER
+}
+
+enum NotificationStatus {
+  QUEUED
+  DELIVERED
+  FAILED
+  CANCELLED
+}
+
+enum AwardVerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  DISPUTED
+}
+
+enum EngagementLetterStatus {
+  NOT_STARTED
+  SENT
+  SIGNED
+  RECEIVED
+  NOT_REQUIRED
+}
+
+enum TaxBasis {
+  UNKNOWN
+  EXCLUSIVE
+  INCLUSIVE
+  EXEMPT
+}
+
+enum BillingFrequency {
+  UNKNOWN
+  ONE_OFF
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+  OTHER
 }
 
 /// Represents a system user.
@@ -187,6 +365,16 @@ model User {
   role Role
 
   isAdmin Boolean @default(false)
+
+  /// Disabled users retain all history. Login and new assignments are blocked
+  /// while their authored records stay intact.
+  isActive Boolean @default(true)
+  deactivatedAt DateTime?
+
+  /// The Partner a team lead (Manager) reports to and receives work from.
+  supervisorPartnerId String?
+  supervisorPartner User? @relation("TeamLeadSupervisor", fields: [supervisorPartnerId], references: [id], onDelete: SetNull)
+  supervisedTeamLeads User[] @relation("TeamLeadSupervisor")
 
   /// Optional department association.
   ///
@@ -247,6 +435,53 @@ model User {
   assignedFollowups Followup[] @relation("FollowupAssignedTo")
   /// Follow-ups created by this user.
   createdFollowups  Followup[] @relation("FollowupCreatedBy")
+
+  /// Explicit per-record and portfolio scopes. Sharing one record never
+  /// implies access to an entire country or department.
+  accessScopes UserAccessScope[]
+
+  reviewedOpportunities Opportunity[] @relation("OpportunityReviewer")
+  nextActionOpportunities Opportunity[] @relation("OpportunityNextActionOwner")
+  goNoGoDecisions Opportunity[] @relation("OpportunityGoNoGoBy")
+  awardApprovals Opportunity[] @relation("OpportunityAwardApprovedBy")
+  archivedOrganizations Organization[] @relation("OrganizationArchivedBy")
+  archivedOpportunities Opportunity[] @relation("OpportunityArchivedBy")
+
+  opportunityContributions OpportunityContributor[] @relation("ContributorUser")
+  contributorAssignmentsMade OpportunityContributor[] @relation("ContributorAssignedBy")
+
+  credentialsOwned Credential[] @relation("CredentialOwner")
+  credentialsCreated Credential[] @relation("CredentialCreatedBy")
+
+  proposalsCreated Proposal[] @relation("ProposalCreatedBy")
+  proposalTechnicalOwnerships Proposal[] @relation("ProposalTechnicalOwner")
+  proposalBdOwnerships Proposal[] @relation("ProposalBdOwner")
+  proposalRevisionsCreated ProposalRevision[] @relation("RevisionCreatedBy")
+  revisionTechnicalCompletions ProposalRevision[] @relation("RevisionTechnicalCompletedBy")
+  revisionBdReviews ProposalRevision[] @relation("RevisionBdReviewedBy")
+  revisionPartnerSignoffs ProposalRevision[] @relation("RevisionPartnerSignedBy")
+  proposalSubmissions ProposalSubmission[] @relation("SubmissionBy")
+  proposalApprovals ProposalApproval[] @relation("ApprovalActor")
+  approvalsInvalidated ProposalApproval[] @relation("ApprovalInvalidatedBy")
+  checklistTemplatesCreated ChecklistTemplate[] @relation("ChecklistTemplateCreatedBy")
+  checklistVersionsCreated ChecklistTemplateVersion[] @relation("ChecklistVersionCreatedBy")
+  checklistVersionsPublished ChecklistTemplateVersion[] @relation("ChecklistVersionPublishedBy")
+  checklistItemsResponsible ProposalChecklistItem[] @relation("ChecklistItemResponsible")
+  checklistItemsCompleted ProposalChecklistItem[] @relation("ChecklistItemCompleted")
+  checklistItemsReviewed ProposalChecklistItem[] @relation("ChecklistItemReviewed")
+  approvalPoliciesCreated ApprovalPolicy[] @relation("ApprovalPolicyCreatedBy")
+
+  prequalificationsOwned Prequalification[] @relation("PrequalificationOwner")
+  prequalificationsCreated Prequalification[] @relation("PrequalificationCreatedBy")
+
+  settingsUpdated SystemSetting[] @relation("SettingUpdatedBy")
+  auditEvents AuditEvent[] @relation("AuditActor")
+  notifications Notification[]
+  reportSnapshots ReportSnapshot[] @relation("ReportSnapshotGeneratedBy")
+  savedReportViews SavedReportView[] @relation("SavedViewOwner")
+  reportSchedulesCreated ReportSchedule[] @relation("ReportScheduleCreatedBy")
+  duplicateReviews DuplicateCandidate[] @relation("DuplicateReviewedBy")
+
   /// Timestamp recording when the user was created.
   createdAt         DateTime   @default(now())
 
@@ -307,6 +542,8 @@ model Department {
 
   /// Opportunities being handled by this department.
   opportunities Opportunity[]
+  accessScopes UserAccessScope[]
+  prequalifications Prequalification[]
 
   /// Timestamp recording when the department was created.
   createdAt DateTime @default(now())
@@ -341,6 +578,37 @@ model Organization {
 
   /// Country of the client — drives the country-level management reports.
   country String?
+
+  /// Ronalds contracting entity and office are deliberately separate from
+  /// the client's country. Organization-level values are defaults; an
+  /// opportunity may override them where the work is contracted differently.
+  contractingEntityId String?
+  contractingEntity ContractingEntity? @relation(fields: [contractingEntityId], references: [id], onDelete: SetNull)
+  officeId String?
+  office Office? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+
+  /// Optional group-account relationship. This never merges legal entities:
+  /// it records that two independent organizations belong to one group.
+  parentOrganizationId String?
+  parentOrganization Organization? @relation("OrganizationGroup", fields: [parentOrganizationId], references: [id], onDelete: SetNull)
+  childOrganizations Organization[] @relation("OrganizationGroup")
+
+  /// Controlled duplicate resolution. A duplicate is archived and pointed at
+  /// the surviving record; it is never silently hard-deleted.
+  mergedIntoId String?
+  mergedInto Organization? @relation("OrganizationMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom Organization[] @relation("OrganizationMerge")
+  duplicateReviewRequired Boolean @default(false)
+
+  isArchived Boolean @default(false)
+  archivedAt DateTime?
+  archivedById String?
+  archivedBy User? @relation("OrganizationArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
+
+  duplicateCandidates DuplicateCandidate[] @relation("DuplicatePrimary")
+  duplicateMatches DuplicateCandidate[] @relation("DuplicateCandidate")
+  prequalifications Prequalification[]
+  accessScopes UserAccessScope[]
 
   /// Optional website.
   website String?
@@ -465,6 +733,9 @@ model Contact {
   /// Relationship to the organization employing this contact.
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  /// Opportunities for which this person is the recorded decision-maker.
+  decisionMakerFor Opportunity[] @relation("OpportunityDecisionMaker")
+
   /// Timestamp recording when the contact was added.
   createdAt DateTime @default(now())
 
@@ -545,6 +816,111 @@ model Opportunity {
   /// Example:
   /// "FY2027 Statutory Audit"
   service String
+
+  /// Commercial outcome, separate from proposal progress and from the
+  /// legacy Stage column. Existing records are migrated conservatively.
+  outcome OpportunityOutcome @default(OPEN)
+  outcomeAt DateTime?
+  onHoldReason String?
+
+  /// Qualification is a gate, not a stage. No-go and disqualification are
+  /// kept distinct from a competitive loss.
+  qualificationStatus QualificationStatus @default(UNQUALIFIED)
+  qualificationDate DateTime?
+  qualificationRequirement String? @db.Text
+  qualificationNotes String? @db.Text
+  clientDeadlineAt DateTime?
+  budgetKnown Decimal? @db.Decimal(18, 2)
+  budgetCurrency String?
+  eligibilityNotes String? @db.Text
+  decisionMakerContactId String?
+  decisionMakerContact Contact? @relation("OpportunityDecisionMaker", fields: [decisionMakerContactId], references: [id], onDelete: SetNull)
+  goNoGoAt DateTime?
+  goNoGoById String?
+  goNoGoBy User? @relation("OpportunityGoNoGoBy", fields: [goNoGoById], references: [id], onDelete: SetNull)
+  noGoReason String? @db.Text
+  noGoReasonCode String?
+
+  /// Original source channel is independent of how the enquiry arrived
+  /// (email, phone, portal). Named referrers are first-class reporting keys.
+  sourceReferrerName String?
+  sourceReferrerOrganization String?
+  sourceCampaign String?
+  sourceEvent String?
+
+  /// Configurable conflict and independence control.
+  conflictCheckStatus String? @default("NOT_REQUIRED")
+  conflictCheckedAt DateTime?
+  conflictCheckedById String?
+  conflictCheckNotes String? @db.Text
+
+  /// Separate commercial values. The legacy `amount` column is preserved and
+  /// never overwritten by award changes.
+  estimatedValue Decimal? @db.Decimal(18, 2)
+  approvedQuotedFee Decimal? @db.Decimal(18, 2)
+  submittedFee Decimal? @db.Decimal(18, 2)
+  confirmedAwardValue Decimal? @db.Decimal(18, 2)
+  bidPurchaseCost Decimal? @db.Decimal(18, 2)
+  awardCurrency String?
+  bidCostCurrency String?
+  taxBasis TaxBasis @default(UNKNOWN)
+  billingFrequency BillingFrequency @default(UNKNOWN)
+  termMonths Int?
+  wonValueVarianceReason String?
+
+  /// Confirmed-win metadata. Evidence and engagement letters are external
+  /// references only; this CRM does not store documents.
+  awardDate DateTime?
+  awardEvidenceReference String?
+  awardVerificationStatus AwardVerificationStatus @default(UNVERIFIED)
+  engagementLetterStatus EngagementLetterStatus @default(NOT_STARTED)
+  engagementLetterReference String?
+  awardApprovedById String?
+  awardApprovedBy User? @relation("OpportunityAwardApprovedBy", fields: [awardApprovedById], references: [id], onDelete: SetNull)
+
+  /// Structured loss data. Free text remains for explanation only.
+  lossReasonCode LossReasonCode?
+  lossReasonDetail String? @db.Text
+  feedbackRequestedAt DateTime?
+  feedbackActionId String?
+
+  /// Mandatory exception process for open work. Incomplete legacy records are
+  /// flagged rather than silently rewritten.
+  nextAction String?
+  nextActionDueAt DateTime?
+  nextActionOwnerId String?
+  nextActionOwner User? @relation("OpportunityNextActionOwner", fields: [nextActionOwnerId], references: [id], onDelete: SetNull)
+
+  reviewerId String?
+  reviewer User? @relation("OpportunityReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+
+  /// Ronalds entity, office and service category are independent dimensions.
+  contractingEntityId String?
+  contractingEntity ContractingEntity? @relation(fields: [contractingEntityId], references: [id], onDelete: SetNull)
+  officeId String?
+  office Office? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  serviceCategoryId String?
+  serviceCategory ServiceCategory? @relation(fields: [serviceCategoryId], references: [id], onDelete: SetNull)
+
+  /// A tender may result from a supplier-panel application. This link does not
+  /// turn acceptance into a win.
+  sourcePrequalificationId String?
+  sourcePrequalification Prequalification? @relation("PrequalificationSource", fields: [sourcePrequalificationId], references: [id], onDelete: SetNull)
+
+  isArchived Boolean @default(false)
+  archivedAt DateTime?
+  archivedById String?
+  archivedBy User? @relation("OpportunityArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
+
+  /// Set when legacy data cannot be mapped without inventing a fact.
+  reviewRequired Boolean @default(false)
+  reviewReason String?
+  legacyStage String?
+
+  proposals Proposal[]
+  contributors OpportunityContributor[]
+  allocations OpportunityAllocation[]
+  accessScopes UserAccessScope[]
 
   /// The moment the opportunity entered its current stage.
   ///
@@ -1018,4 +1394,528 @@ model Followup {
   @@index([opportunityId, dueAt])
   /// Supports loading follow-ups within an organization.
   @@index([organizationId, dueAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enterprise CRM extension
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A Ronalds legal entity that can contract with clients (including Selego).
+model ContractingEntity {
+  id           String  @id @default(uuid())
+  name         String  @unique
+  code         String? @unique
+  country      String?
+  baseCurrency String  @default("KES")
+  isActive     Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  organizations   Organization[]
+  opportunities   Opportunity[]
+  offices         Office[]
+  userScopes      UserAccessScope[]
+  approvalPolicies ApprovalPolicy[]
+
+  @@index([country])
+}
+
+model Office {
+  id        String  @id @default(uuid())
+  name      String  @unique
+  country   String?
+  entityId  String?
+  entity    ContractingEntity? @relation(fields: [entityId], references: [id], onDelete: SetNull)
+  isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organizations Organization[]
+  opportunities Opportunity[]
+  userScopes    UserAccessScope[]
+
+  @@index([entityId])
+}
+
+model ServiceCategory {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  description String?
+  isActive    Boolean @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  opportunities Opportunity[]
+}
+
+/// Portfolio/record scope for a user, in addition to account assignment.
+/// Record-level scopes grant exactly one record, never the surrounding
+/// country or department database.
+model UserAccessScope {
+  id                   String  @id @default(uuid())
+  userId               String
+  user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  country              String?
+  contractingEntityId  String?
+  contractingEntity    ContractingEntity? @relation(fields: [contractingEntityId], references: [id], onDelete: SetNull)
+  officeId             String?
+  office               Office? @relation(fields: [officeId], references: [id], onDelete: SetNull)
+  departmentId         String?
+  department           Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  organizationId       String?
+  organization         Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  opportunityId        String?
+  opportunity          Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  createdAt            DateTime @default(now())
+
+  @@index([userId])
+  @@index([country])
+  @@index([contractingEntityId])
+  @@index([organizationId])
+  @@index([opportunityId])
+}
+
+/// Explicit contributors on one opportunity. This is the narrow sharing path:
+/// it must never widen access to the contributor's organization or country.
+model OpportunityContributor {
+  id            String @id @default(uuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User @relation("ContributorUser", fields: [userId], references: [id], onDelete: Cascade)
+  assignedById  String?
+  assignedBy    User? @relation("ContributorAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  accessLevel   String @default("VIEW")
+  createdAt     DateTime @default(now())
+
+  @@unique([opportunityId, userId])
+  @@index([userId])
+}
+
+/// Explicit country/entity allocations for one opportunity. Allocations are
+/// not final until they reconcile to the opportunity value (or 100%).
+model OpportunityAllocation {
+  id            String @id @default(uuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  country       String
+  contractingEntityId String?
+  amount        Decimal? @db.Decimal(18, 2)
+  percentage    Decimal? @db.Decimal(9, 4)
+  currency      String?
+  basis         AllocationBasis @default(PERCENT)
+  isFinalized   Boolean @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([opportunityId])
+  @@index([country])
+}
+
+// ── Proposals, versions, checklists and approvals ───────────────────────────
+
+model Proposal {
+  id                    String  @id @default(uuid())
+  opportunityId         String
+  opportunity           Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  title                 String
+  createdById           String
+  createdBy             User    @relation("ProposalCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  /// Team lead (Manager) who prepares the technical proposal.
+  technicalOwnerId      String?
+  technicalOwner        User?   @relation("ProposalTechnicalOwner", fields: [technicalOwnerId], references: [id], onDelete: SetNull)
+  /// BD person who checks the quality checklist and verifies technical work.
+  bdOwnerId             String?
+  bdOwner               User?   @relation("ProposalBdOwner", fields: [bdOwnerId], references: [id], onDelete: SetNull)
+  currentRevisionNumber Int     @default(0)
+  isArchived            Boolean @default(false)
+  archivedAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  revisions ProposalRevision[]
+
+  @@index([opportunityId])
+}
+
+model ProposalRevision {
+  id                         String  @id @default(uuid())
+  proposalId                 String
+  proposal                   Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+  revisionNumber             Int
+  status                     ProposalStatus @default(PENDING_INPUTS)
+  checklistTemplateVersionId String?
+  checklistTemplateVersion   ChecklistTemplateVersion? @relation(fields: [checklistTemplateVersionId], references: [id], onDelete: SetNull)
+  summary                    String? @db.Text
+  feeAmount                  Decimal? @db.Decimal(18, 2)
+  feeCurrency                String?
+  scopeSummary               String? @db.Text
+  keyTerms                   String? @db.Text
+  materialSnapshot           Json?
+  materialVersion            Int     @default(1)
+  workflowStage              ProposalWorkflowStage @default(TECHNICAL_PREPARATION)
+  technicalCompletedAt       DateTime?
+  technicalCompletedById     String?
+  technicalCompletedBy       User?   @relation("RevisionTechnicalCompletedBy", fields: [technicalCompletedById], references: [id], onDelete: SetNull)
+  bdReviewedAt               DateTime?
+  bdReviewedById             String?
+  bdReviewedBy               User?   @relation("RevisionBdReviewedBy", fields: [bdReviewedById], references: [id], onDelete: SetNull)
+  partnerSignedAt            DateTime?
+  partnerSignedById          String?
+  partnerSignedBy            User?   @relation("RevisionPartnerSignedBy", fields: [partnerSignedById], references: [id], onDelete: SetNull)
+  returnedAt                 DateTime?
+  returnReason               String? @db.Text
+  approvedAt                 DateTime?
+  approvalInvalidatedAt      DateTime?
+  approvalInvalidationReason String?
+  createdById                String
+  createdBy                  User    @relation("RevisionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  submissions          ProposalSubmission[]
+  checklistItems       ProposalChecklistItem[]
+  approvals            ProposalApproval[]
+  credentialReferences ProposalCredentialReference[]
+
+  @@unique([proposalId, revisionNumber])
+  @@index([status])
+}
+
+model ProposalSubmission {
+  id                 String  @id @default(uuid())
+  revisionId         String
+  revision           ProposalRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  submittedAt        DateTime @default(now())
+  channel            String
+  externalReference  String?
+  proofReference     String?
+  isFirstSubmission  Boolean @default(false)
+  notes              String? @db.Text
+  submittedById      String
+  submittedBy        User    @relation("SubmissionBy", fields: [submittedById], references: [id], onDelete: Restrict)
+
+  @@index([revisionId, submittedAt])
+}
+
+model ChecklistTemplate {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+  isActive    Boolean @default(true)
+  createdById String
+  createdBy   User    @relation("ChecklistTemplateCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions ChecklistTemplateVersion[]
+
+  @@unique([name])
+}
+
+model ChecklistTemplateVersion {
+  id            String  @id @default(uuid())
+  templateId    String
+  template      ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  version       Int
+  status        ChecklistVersionStatus @default(DRAFT)
+  configuration Json?
+  createdById   String
+  createdBy     User    @relation("ChecklistVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  publishedAt   DateTime?
+  publishedById String?
+  publishedBy   User?   @relation("ChecklistVersionPublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime @default(now())
+
+  items    ChecklistTemplateItem[]
+  revisions ProposalRevision[]
+
+  @@unique([templateId, version])
+  @@index([status])
+}
+
+model ChecklistTemplateItem {
+  id              String  @id @default(uuid())
+  versionId       String
+  version         ChecklistTemplateVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  code            String
+  label           String
+  description     String?
+  required        Boolean @default(true)
+  requiresReview  Boolean @default(false)
+  responsibleRole String?
+  sortOrder       Int     @default(0)
+  metadata        Json?
+
+  instances ProposalChecklistItem[]
+
+  @@unique([versionId, code])
+}
+
+model ProposalChecklistItem {
+  id                String  @id @default(uuid())
+  revisionId        String
+  revision          ProposalRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  templateItemId    String?
+  templateItem      ChecklistTemplateItem? @relation(fields: [templateItemId], references: [id], onDelete: SetNull)
+  code              String
+  label             String
+  description       String?
+  required          Boolean @default(true)
+  requiresReview    Boolean @default(false)
+  sortOrder         Int     @default(0)
+  status            ChecklistItemStatus @default(PENDING)
+  responsibleRole   String?
+  responsibleUserId String?
+  responsibleUser   User?   @relation("ChecklistItemResponsible", fields: [responsibleUserId], references: [id], onDelete: SetNull)
+  completedById     String?
+  completedBy       User?   @relation("ChecklistItemCompleted", fields: [completedById], references: [id], onDelete: SetNull)
+  completedAt       DateTime?
+  reviewedById      String?
+  reviewedBy        User?   @relation("ChecklistItemReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt        DateTime?
+  comment           String? @db.Text
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([revisionId])
+  @@index([status])
+}
+
+model ApprovalPolicy {
+  id                    String  @id @default(uuid())
+  name                  String
+  description           String?
+  entityId              String?
+  entity                ContractingEntity? @relation(fields: [entityId], references: [id], onDelete: SetNull)
+  minAmount             Decimal? @db.Decimal(18, 2)
+  maxAmount             Decimal? @db.Decimal(18, 2)
+  currency              String  @default("KES")
+  requiredRole          Role?
+  requiredApprovals     Int     @default(1)
+  prohibitsSelfApproval Boolean @default(true)
+  isActive              Boolean @default(true)
+  createdById           String?
+  createdBy             User?   @relation("ApprovalPolicyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+model ProposalApproval {
+  id                String  @id @default(uuid())
+  revisionId        String
+  revision          ProposalRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  kind              ApprovalKind   @default(APPROVAL)
+  status            ApprovalStatus @default(PENDING)
+  actorId           String?
+  actor             User?   @relation("ApprovalActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actorRole         Role?
+  decidedAt         DateTime?
+  comment           String? @db.Text
+  amountAtDecision  Decimal? @db.Decimal(18, 2)
+  currency          String?
+  selfApproval      Boolean @default(false)
+  invalidatedAt     DateTime?
+  invalidatedById   String?
+  invalidatedBy     User?   @relation("ApprovalInvalidatedBy", fields: [invalidatedById], references: [id], onDelete: SetNull)
+  invalidationReason String?
+  createdAt         DateTime @default(now())
+
+  @@index([revisionId, status])
+}
+
+model Credential {
+  id          String  @id @default(uuid())
+  name        String
+  ownerId     String?
+  owner       User?   @relation("CredentialOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  reference   String?
+  version     String?
+  expiryAt    DateTime?
+  status      CredentialStatus @default(ACTIVE)
+  notes       String? @db.Text
+  createdById String
+  createdBy   User    @relation("CredentialCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  revisionReferences ProposalCredentialReference[]
+
+  @@index([expiryAt])
+  @@index([status])
+}
+
+model ProposalCredentialReference {
+  id                String  @id @default(uuid())
+  revisionId        String
+  revision          ProposalRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  credentialId      String
+  credential        Credential @relation(fields: [credentialId], references: [id], onDelete: Restrict)
+  credentialVersion String?
+  note              String?
+  createdAt         DateTime @default(now())
+
+  @@unique([revisionId, credentialId, credentialVersion])
+}
+
+// ── Prequalifications ───────────────────────────────────────────────────────
+
+model Prequalification {
+  id                 String  @id @default(uuid())
+  organizationId     String
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  service            String
+  departmentId       String?
+  department         Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  ownerId            String?
+  owner              User?   @relation("PrequalificationOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  status             PrequalificationStatus @default(DRAFT)
+  applicationDate    DateTime?
+  submittedAt        DateTime?
+  acceptedAt         DateTime?
+  rejectedAt         DateTime?
+  cost               Decimal? @db.Decimal(18, 2)
+  currency           String  @default("KES")
+  validityFrom       DateTime?
+  expiryAt           DateTime?
+  renewalOfId        String?
+  renewalOf          Prequalification? @relation("PrequalificationRenewal", fields: [renewalOfId], references: [id], onDelete: SetNull)
+  renewals           Prequalification[] @relation("PrequalificationRenewal")
+  externalReference  String?
+  notes              String? @db.Text
+  createdById        String
+  createdBy          User    @relation("PrequalificationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  archivedAt         DateTime?
+
+  sourceOpportunities Opportunity[] @relation("PrequalificationSource")
+
+  @@index([organizationId, status])
+  @@index([expiryAt])
+}
+
+// ── Configuration, audit, notifications and report governance ───────────────
+
+model SystemSetting {
+  key         String  @id
+  value       Json
+  category    String?
+  description String?
+  updatedById String?
+  updatedBy   User?   @relation("SettingUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([category])
+}
+
+model AuditEvent {
+  id         String  @id @default(uuid())
+  actorId    String?
+  actor      User?   @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actorType  ActorType @default(USER)
+  action     AuditAction
+  entityType String
+  entityId   String
+  summary    String
+  before     Json?
+  after      Json?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action])
+}
+
+model Notification {
+  id            String  @id @default(uuid())
+  userId        String
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          String
+  title         String
+  body          String  @db.Text
+  entityType    String?
+  entityId      String?
+  status        NotificationStatus @default(QUEUED)
+  createdAt     DateTime @default(now())
+  deliveredAt   DateTime?
+  readAt        DateTime?
+  deliveryError String?
+
+  @@index([userId, status])
+  @@index([createdAt])
+}
+
+model ReportSnapshot {
+  id                String  @id @default(uuid())
+  reportKey         String
+  params            Json
+  periodFrom        DateTime?
+  periodTo          DateTime?
+  payload           Json
+  calculationBasis  String  @db.Text
+  generatedById     String
+  generatedBy       User    @relation("ReportSnapshotGeneratedBy", fields: [generatedById], references: [id], onDelete: Restrict)
+  generatedAt       DateTime @default(now())
+
+  @@index([reportKey, generatedAt])
+}
+
+model SavedReportView {
+  id        String  @id @default(uuid())
+  name      String
+  reportKey String
+  params    Json
+  ownerId   String
+  owner     User    @relation("SavedViewOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  isShared  Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([ownerId, name])
+}
+
+model ReportSchedule {
+  id                 String  @id @default(uuid())
+  name               String
+  reportKey          String
+  params             Json
+  cadence            String
+  recipients         Json
+  deliveryMechanism  String?
+  isActive           Boolean @default(true)
+  createdById        String
+  createdBy          User    @relation("ReportScheduleCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  lastRunAt          DateTime?
+  nextRunAt          DateTime?
+
+  @@index([isActive, nextRunAt])
+}
+
+model DuplicateCandidate {
+  id                       String  @id @default(uuid())
+  primaryOrganizationId    String
+  primaryOrganization      Organization @relation("DuplicatePrimary", fields: [primaryOrganizationId], references: [id], onDelete: Cascade)
+  candidateOrganizationId  String
+  candidateOrganization    Organization @relation("DuplicateCandidate", fields: [candidateOrganizationId], references: [id], onDelete: Cascade)
+  matchScore               Float?
+  matchReasons             Json?
+  status                   String  @default("OPEN")
+  reviewedById             String?
+  reviewedBy               User?   @relation("DuplicateReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt               DateTime?
+  decision                 String?
+  notes                    String? @db.Text
+  mergedOrganizationId     String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@unique([primaryOrganizationId, candidateOrganizationId])
+  @@index([status])
 }

@@ -20,6 +20,8 @@ export type DonutDatum = {
   label: string;
   value: number;
   color: string;
+  /** Optional secondary line, e.g. KES value for that stage. */
+  meta?: string;
 };
 
 type DonutChartProps = {
@@ -197,7 +199,10 @@ export function DonutChart({
               <View
                 style={[styles.dot, { backgroundColor: item.color }]}
               />
-              <Text style={styles.legendLabel}>{item.label}</Text>
+              <View style={styles.legendLabelWrap}>
+                <Text style={styles.legendLabel}>{item.label}</Text>
+                {item.meta ? <Text style={styles.legendMeta}>{item.meta}</Text> : null}
+              </View>
               <Text style={styles.legendValue}>
                 {valueFormatter
                   ? valueFormatter(item.value)
@@ -280,10 +285,19 @@ const styles = StyleSheet.create({
     borderRadius: 5,
   },
 
-  legendLabel: {
+  legendLabelWrap: {
     flex: 1,
+    minWidth: 0,
+  },
+  legendLabel: {
     ...tokens.type.caption,
     color: tokens.color.ink,
+  },
+  legendMeta: {
+    ...tokens.type.micro,
+    letterSpacing: 0,
+    color: tokens.color.inkMuted,
+    marginTop: 2,
   },
 
   legendValue: {

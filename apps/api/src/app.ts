@@ -12,6 +12,13 @@ import { notesRouter } from "./modules/notes/notes.routes";
 import { usersRouter } from "./modules/users/users.routes";
 import { departmentsRouter } from "./modules/departments/departments.routes";
 import { contactsRouter } from "./modules/contacts/contacts.routes";
+import { governanceRouter } from "./modules/governance/governance.routes";
+import { prequalificationsRouter } from "./modules/prequalifications/prequalifications.routes";
+import { proposalsRouter } from "./modules/proposals/proposals.routes";
+import { enterpriseOpportunityRouter } from "./modules/opportunities/enterpriseOpportunity.routes";
+import { accountGovernanceRouter } from "./modules/organizations/accountGovernance.routes";
+import { exportsRouter } from "./modules/exports/exports.routes";
+import { managementReportingRouter } from "./modules/reporting/management.routes";
 import {
   runSweepAtStartup,
   sweepOverdueProposals,
@@ -41,15 +48,24 @@ app.get("/", (req, res) => {
 });
 
 app.use("/auth", authRouter);
+app.use("/organizations", accountGovernanceRouter);
 app.use("/organizations", organizationsRouter);
 app.use("/clients", clientsRouter);
+app.use("/opportunities", enterpriseOpportunityRouter);
 app.use("/opportunities", opportunitiesRouter);
+app.use("/reporting", managementReportingRouter);
 app.use("/reporting", reportingRouter);
 app.use("/followups", followupsRouter);
 app.use("/notes", notesRouter);
 app.use("/users", usersRouter);
 app.use("/departments", departmentsRouter);
 app.use("/contacts", contactsRouter);
+app.use("/governance", governanceRouter);
+app.use("/prequalifications", prequalificationsRouter);
+app.use("/exports", exportsRouter);
+// Proposal routes span opportunities, templates, credentials and revisions,
+// so they own their own top-level paths rather than nesting under one noun.
+app.use("/", proposalsRouter);
 
 /**
  * Terminal error handler.

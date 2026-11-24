@@ -8,6 +8,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "seed": "tsx prisma/seed.ts",
     "import:company": "tsx scripts/import-company-data.ts",
+    "reconcile:enterprise": "tsx scripts/enterprise-reconciliation.ts",
+    "seed:proposal-checklist": "tsx scripts/seed-proposal-checklist.ts",
+    "backfill:prospect-opportunities": "tsx scripts/backfill-prospect-opportunities.ts",
     "dev": "nodemon --exec tsx src/app.ts",
     "start": "tsx src/app.ts"
   },

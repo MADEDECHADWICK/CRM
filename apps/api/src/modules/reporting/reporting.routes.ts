@@ -9,6 +9,7 @@ import {
   AuthedRequest,
   opportunityScope,
   organizationScope,
+  prequalificationScope,
 } from "../../middleware/authorize";
 import {
   REPORT_PERIODS,
@@ -48,10 +49,16 @@ reportingRouter.use(requireAuth);
 function canAccessReporting(user: AuthedRequest["user"]): boolean {
   return (
     user !== undefined &&
-    (user.role === "MARKETING_BD" ||
-      user.role === "PARTNER" ||
-      user.role === "MANAGER")
+    ["MARKETING_BD", "PARTNER", "MANAGER", "COUNTRY_LEAD", "PROPOSAL_COORDINATOR"].includes(user.role)
   );
+}
+
+/**
+ * KES conversion that never invents a rate. A null result means the value is
+ * unavailable and must not be summed as zero.
+ */
+function safeKes(amount: number | null | undefined, currency: string | null | undefined): number | null {
+  return toKes(amount, currency);
 }
 
 const summaryQuerySchema = z.object({
@@ -100,7 +107,7 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
       });
     }
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const range =
       query.data.period === "custom"
         ? customReportRange(query.data.from, query.data.to)
@@ -141,7 +148,7 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
         prisma.opportunity.aggregate({ where: where("WON"), _count: true }),
         prisma.opportunity.aggregate({
           where: where("WON"),
-          _sum: { amount: true },
+          _sum: { amount: true, confirmedAwardValue: true },
           _count: true,
         }),
         prisma.opportunity.aggregate({
@@ -181,7 +188,7 @@ reportingRouter.get("/summary", async (req: AuthedRequest, res) => {
         // strings; breakdown and sources already convert with Number(), so
         // summary must too or the same figure is a string here and a number
         // there. Matches the `number` type on ReportingSummary.
-        wonValue: Number(won._sum?.amount ?? 0),
+        wonValue: Number(won._sum?.confirmedAwardValue ?? won._sum?.amount ?? 0),
         wonCount: won._count,
         lostValue: Number(lost._sum?.amount ?? 0),
         lostCount: lost._count,
@@ -218,10 +225,10 @@ type GroupedDatum = {
   departmentId: string | null;
   stage: Stage;
   _count: { _all: number };
-  _sum: { amount: number | null };
+  _sum: { amount: number | null; confirmedAwardValue?: number | null };
 };
 
-// Team-level performance — the per-member (dimension=owner) and
+// Team-level performance - the per-member (dimension=owner) and
 // per-department (dimension=department) view behind the BD-only Team tab.
 // Same period window as /summary, scoped exactly the same way (a MANAGER
 // opening this still sees only their own deals), then grouped by the chosen
@@ -247,7 +254,7 @@ reportingRouter.get("/breakdown", async (req: AuthedRequest, res) => {
       });
     }
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const range =
       query.data.period === "custom"
         ? customReportRange(query.data.from, query.data.to)
@@ -267,8 +274,8 @@ reportingRouter.get("/breakdown", async (req: AuthedRequest, res) => {
 
     const byOwner = query.data.dimension === "owner";
 
-    // Every entity that can appear as a dimension — staff (Partner/Manager)
-    // or all departments — so rows with zero activity in the window still
+    // Every entity that can appear as a dimension - staff (Partner/Manager)
+    // or all departments - so rows with zero activity in the window still
     // render as zeroes instead of vanishing.
     const [staff, departments, grouped] = await Promise.all([
       prisma.user.findMany({
@@ -285,13 +292,13 @@ reportingRouter.get("/breakdown", async (req: AuthedRequest, res) => {
         ? ((await prisma.opportunity.groupBy({
             by: ["ownerId", "stage"],
             _count: { _all: true },
-            _sum: { amount: true },
+            _sum: { amount: true, confirmedAwardValue: true },
             where,
           })) as unknown as GroupedDatum[])
         : ((await prisma.opportunity.groupBy({
             by: ["departmentId", "stage"],
             _count: { _all: true },
-            _sum: { amount: true },
+            _sum: { amount: true, confirmedAwardValue: true },
             where,
           })) as unknown as GroupedDatum[]),
     ]);
@@ -333,7 +340,12 @@ reportingRouter.get("/breakdown", async (req: AuthedRequest, res) => {
       const row = rowsMap.get(key);
       if (!row) continue;
 
-      const value = group._sum.amount != null ? Number(group._sum.amount) : 0;
+      const value =
+        group.stage === "WON"
+          ? Number(group._sum.confirmedAwardValue ?? group._sum.amount ?? 0)
+          : group._sum.amount != null
+            ? Number(group._sum.amount)
+            : 0;
       const count = group._count._all;
 
       row.counts[group.stage] += count;
@@ -390,7 +402,7 @@ reportingRouter.get("/breakdown", async (req: AuthedRequest, res) => {
   }
 });
 
-// ── Lead-source attribution (BR-018) ──
+// -- Lead-source attribution (BR-018) --
 
 /**
  * Where leads come from, and which channels actually convert.
@@ -422,7 +434,7 @@ reportingRouter.get("/sources", async (req: AuthedRequest, res) => {
       });
     }
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const range =
       query.data.period === "custom"
         ? customReportRange(query.data.from, query.data.to)
@@ -502,7 +514,7 @@ reportingRouter.get("/sources", async (req: AuthedRequest, res) => {
       };
     });
 
-    // Strongest conversion first — a reader scanning the table wants the
+    // Strongest conversion first - a reader scanning the table wants the
     // answer at the top, not alphabetised by enum value.
     rows.sort((a, b) => {
       const ar = a.proposalToWinRate ?? -1;
@@ -549,7 +561,7 @@ reportingRouter.get("/sources", async (req: AuthedRequest, res) => {
   }
 });
 
-// ── Proposal turnaround and deadline discipline (BR-016 … BR-019) ──
+// -- Proposal turnaround and deadline discipline (BR-016 - BR-019) --
 reportingRouter.get("/proposals", async (req: AuthedRequest, res) => {
   try {
     if (!canAccessReporting(req.user)) {
@@ -570,7 +582,7 @@ reportingRouter.get("/proposals", async (req: AuthedRequest, res) => {
       });
     }
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const range =
       query.data.period === "custom"
         ? customReportRange(query.data.from, query.data.to)
@@ -665,7 +677,7 @@ reportingRouter.get("/proposals", async (req: AuthedRequest, res) => {
   }
 });
 
-// ── Performance scorecard (Leads / Quotes / Sent / Wins / Booked) ───────────
+// -- Performance scorecard (Leads / Quotes / Sent / Wins / Booked) ------
 //
 // The core table behind the "X performance" slides. Grouped by department,
 // country, signing role or industry. Money is converted to KES via the shared
@@ -727,7 +739,7 @@ reportingRouter.get("/scorecard", async (req: AuthedRequest, res) => {
       return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: query.error.message } });
     }
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const range =
       query.data.period === "custom"
         ? customReportRange(query.data.from, query.data.to)
@@ -743,7 +755,8 @@ reportingRouter.get("/scorecard", async (req: AuthedRequest, res) => {
       prisma.opportunity.findMany({
         where: { ...scope },
         select: {
-          amount: true, currency: true, leadReceivedAt: true, proposalSubmittedAt: true,
+          amount: true, confirmedAwardValue: true, submittedFee: true, approvedQuotedFee: true, estimatedValue: true,
+          currency: true, leadReceivedAt: true, proposalSubmittedAt: true,
           wonAt: true, departmentId: true, signingPartnerId: true,
           organization: { select: { country: true, industry: true } },
         },
@@ -766,6 +779,7 @@ reportingRouter.get("/scorecard", async (req: AuthedRequest, res) => {
         : k ?? "Unspecified";
 
     const map = new Map<string, ScorecardRow>();
+    let unavailableValueCount = 0;
     for (const o of opps) {
       const k = keyOf(o);
       const mapKey = k ?? "__none__";
@@ -774,10 +788,15 @@ reportingRouter.get("/scorecard", async (req: AuthedRequest, res) => {
         row = { key: k, label: labelOf(k), leads: 0, quotes: 0, sent: 0, wins: 0, booked: 0, winsPerSent: null };
         map.set(mapKey, row);
       }
-      const kes = o.amount != null ? toKes(Number(o.amount), o.currency) : 0;
-      if (inWindow(o.leadReceivedAt)) { row.leads += 1; row.quotes += kes; }
+      const quoteValue = o.submittedFee ?? o.approvedQuotedFee ?? o.estimatedValue ?? o.amount;
+      const quoteKes = quoteValue != null ? safeKes(Number(quoteValue), o.currency) : null;
+      const winValue = o.confirmedAwardValue ?? o.amount;
+      const winKes = winValue != null ? safeKes(Number(winValue), o.currency) : null;
+      if (quoteValue != null && quoteKes == null) unavailableValueCount += 1;
+      if (winValue != null && winKes == null) unavailableValueCount += 1;
+      if (inWindow(o.leadReceivedAt)) { row.leads += 1; if (quoteKes != null) row.quotes += quoteKes; }
       if (inWindow(o.proposalSubmittedAt)) row.sent += 1;
-      if (inWindow(o.wonAt)) { row.wins += 1; row.booked += kes; }
+      if (inWindow(o.wonAt)) { row.wins += 1; if (winKes != null) row.booked += winKes; }
     }
 
     const rows = [...map.values()]
@@ -802,7 +821,7 @@ reportingRouter.get("/scorecard", async (req: AuthedRequest, res) => {
       const pct = (v: number | null) => (v == null ? "N/A" : `${(v * 100).toFixed(1)}%`);
       sendTabularReport(
         res, query.data.format, `scorecard-by-${groupBy}`,
-        `Performance scorecard — by ${groupBy} (${query.data.period})`,
+        `Performance scorecard - by ${groupBy} (${query.data.period})`,
         ["Group", "Leads", "Quotes (KES)", "Sent", "Wins", "Booked (KES)", "Wins/sent"],
         [...rows.map((r) => [r.label, r.leads, r.quotes, r.sent, r.wins, r.booked, pct(r.winsPerSent)]),
          ["Total", totals.leads, totals.quotes, totals.sent, totals.wins, totals.booked, pct(totals.sent ? totals.wins / totals.sent : null)]]
@@ -810,14 +829,14 @@ reportingRouter.get("/scorecard", async (req: AuthedRequest, res) => {
       return;
     }
 
-    res.json({ success: true, data });
+    res.json({ success: true, data: { ...data, unavailableValueCount } });
   } catch (error) {
     console.error("Scorecard reporting error:", error);
     res.status(500).json({ success: false, error: { code: "REPORTING_FAILED", message: "Unable to build scorecard." } });
   }
 });
 
-// ── Shared period parsing for the management report endpoints ───────────────
+// -- Shared period parsing for the management report endpoints ------
 
 const reportQuerySchema = z.object({
   period: z.enum(REPORT_PERIODS).default("all"),
@@ -848,7 +867,7 @@ function inWindow(d: Date | null | undefined, win: PeriodWindow): boolean {
 
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// ── Book of business (new / existing / cross-sell / upsell) ─────────────────
+// -- Book of business (new / existing / cross-sell / upsell) ------
 //
 // New clients = the client's first-ever won job; existing = a later won job
 // that is not classified as cross-sell/upsell. Cross-sell and upsell come from
@@ -868,11 +887,11 @@ reportingRouter.get("/book-of-business", async (req: AuthedRequest, res) => {
     const pw = periodWindow(query.data.period, query.data.from, query.data.to);
     if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const [won, departments] = await Promise.all([
       prisma.opportunity.findMany({
         where: { ...scope, wonAt: { not: null } },
-        select: { amount: true, currency: true, wonAt: true, businessType: true, departmentId: true, organizationId: true },
+        select: { amount: true, confirmedAwardValue: true, currency: true, wonAt: true, businessType: true, departmentId: true, organizationId: true },
       }),
       prisma.department.findMany({ select: { id: true, name: true } }),
     ]);
@@ -889,7 +908,9 @@ reportingRouter.get("/book-of-business", async (req: AuthedRequest, res) => {
     const rowsMap = new Map<string, Row>();
     for (const o of won) {
       if (!inWindow(o.wonAt, pw.win)) continue;
-      const kes = o.amount != null ? toKes(Number(o.amount), o.currency) : 0;
+      const winValue = o.confirmedAwardValue ?? o.amount;
+      const kes = winValue != null ? safeKes(Number(winValue), o.currency) : null;
+      if (kes == null) continue;
       const key = query.data.groupBy === "department" ? o.departmentId : null;
       const label = query.data.groupBy === "department" ? deptName.get(o.departmentId) ?? "Unknown" : "All departments";
       const mapKey = key ?? "__all__";
@@ -926,7 +947,7 @@ reportingRouter.get("/book-of-business", async (req: AuthedRequest, res) => {
   }
 });
 
-// ── Customer acquisition (first-recorded wins per month) ────────────────────
+// -- Customer acquisition (first-recorded wins per month) ------
 
 reportingRouter.get("/acquisition", async (req: AuthedRequest, res) => {
   try {
@@ -938,7 +959,7 @@ reportingRouter.get("/acquisition", async (req: AuthedRequest, res) => {
     const pw = periodWindow(query.data.period, query.data.from, query.data.to);
     if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const won = await prisma.opportunity.findMany({ where: { ...scope, wonAt: { not: null } }, select: { wonAt: true, organizationId: true } });
     const firstWin = new Map<string, number>();
     for (const o of won) {
@@ -971,7 +992,7 @@ reportingRouter.get("/acquisition", async (req: AuthedRequest, res) => {
   }
 });
 
-// ── Industry performance (quoted demand + booked fees) ──────────────────────
+// -- Industry performance (quoted demand + booked fees) ------
 
 reportingRouter.get("/industry", async (req: AuthedRequest, res) => {
   try {
@@ -983,10 +1004,10 @@ reportingRouter.get("/industry", async (req: AuthedRequest, res) => {
     const pw = periodWindow(query.data.period, query.data.from, query.data.to);
     if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const opps = await prisma.opportunity.findMany({
       where: { ...scope },
-      select: { amount: true, currency: true, leadReceivedAt: true, wonAt: true, organization: { select: { industry: true } } },
+      select: { amount: true, confirmedAwardValue: true, submittedFee: true, approvedQuotedFee: true, estimatedValue: true, currency: true, leadReceivedAt: true, wonAt: true, organization: { select: { industry: true } } },
     });
     const map = new Map<string, { key: string | null; label: string; quoted: number; booked: number }>();
     for (const o of opps) {
@@ -994,9 +1015,12 @@ reportingRouter.get("/industry", async (req: AuthedRequest, res) => {
       const mapKey = industry ?? "__none__";
       let row = map.get(mapKey);
       if (!row) { row = { key: industry, label: industry ?? "Unspecified", quoted: 0, booked: 0 }; map.set(mapKey, row); }
-      const kes = o.amount != null ? toKes(Number(o.amount), o.currency) : 0;
-      if (inWindow(o.leadReceivedAt, pw.win)) row.quoted += kes;
-      if (inWindow(o.wonAt, pw.win)) row.booked += kes;
+      const quoteValue = o.submittedFee ?? o.approvedQuotedFee ?? o.estimatedValue ?? o.amount;
+      const quoteKes = quoteValue != null ? safeKes(Number(quoteValue), o.currency) : null;
+      const winValue = o.confirmedAwardValue ?? o.amount;
+      const winKes = winValue != null ? safeKes(Number(winValue), o.currency) : null;
+      if (quoteKes != null && inWindow(o.leadReceivedAt, pw.win)) row.quoted += quoteKes;
+      if (winKes != null && inWindow(o.wonAt, pw.win)) row.booked += winKes;
     }
     const rows = [...map.values()].filter((r) => r.quoted !== 0 || r.booked !== 0).sort((a, b) => b.booked - a.booked || b.quoted - a.quoted);
 
@@ -1012,7 +1036,7 @@ reportingRouter.get("/industry", async (req: AuthedRequest, res) => {
   }
 });
 
-// ── Client priorities (largest booked accounts) ─────────────────────────────
+// -- Client priorities (largest booked accounts) ------
 
 reportingRouter.get("/client-priorities", async (req: AuthedRequest, res) => {
   try {
@@ -1025,16 +1049,18 @@ reportingRouter.get("/client-priorities", async (req: AuthedRequest, res) => {
     if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
     const limit = query.data.limit ?? 10;
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const won = await prisma.opportunity.findMany({
       where: { ...scope, wonAt: { not: null } },
-      select: { amount: true, currency: true, wonAt: true, organization: { select: { id: true, name: true, country: true } } },
+      select: { amount: true, confirmedAwardValue: true, currency: true, wonAt: true, organization: { select: { id: true, name: true, country: true } } },
     });
     const map = new Map<string, { clientId: string; name: string; country: string | null; booked: number }>();
     for (const o of won) {
       if (!inWindow(o.wonAt, pw.win)) continue;
       const org = o.organization;
-      const kes = o.amount != null ? toKes(Number(o.amount), o.currency) : 0;
+      const winValue = o.confirmedAwardValue ?? o.amount;
+      const kes = winValue != null ? safeKes(Number(winValue), o.currency) : null;
+      if (kes == null) continue;
       let row = map.get(org.id);
       if (!row) { row = { clientId: org.id, name: org.name, country: org.country ?? null, booked: 0 }; map.set(org.id, row); }
       row.booked += kes;
@@ -1053,7 +1079,7 @@ reportingRouter.get("/client-priorities", async (req: AuthedRequest, res) => {
   }
 });
 
-// ── Proposal turnaround by country ──────────────────────────────────────────
+// -- Proposal turnaround by country ------
 
 reportingRouter.get("/turnaround", async (req: AuthedRequest, res) => {
   try {
@@ -1065,7 +1091,7 @@ reportingRouter.get("/turnaround", async (req: AuthedRequest, res) => {
     const pw = periodWindow(query.data.period, query.data.from, query.data.to);
     if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const opps = await prisma.opportunity.findMany({
       where: { ...scope, proposalSubmittedAt: { not: null } },
       select: { leadReceivedAt: true, proposalSubmittedAt: true, organization: { select: { country: true } } },
@@ -1105,7 +1131,7 @@ reportingRouter.get("/turnaround", async (req: AuthedRequest, res) => {
   }
 });
 
-// ── Priority follow-ups (largest submitted bids) ────────────────────────────
+// -- Priority follow-ups (largest submitted bids) ------
 
 reportingRouter.get("/priority-follow-ups", async (req: AuthedRequest, res) => {
   try {
@@ -1118,11 +1144,11 @@ reportingRouter.get("/priority-follow-ups", async (req: AuthedRequest, res) => {
     if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
     const limit = query.data.limit ?? 10;
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const submitted = await prisma.opportunity.findMany({
       where: { ...scope, stage: "AWAITING_FEEDBACK" },
       select: {
-        id: true, title: true, amount: true, currency: true, proposalSubmittedAt: true,
+        id: true, title: true, amount: true, submittedFee: true, approvedQuotedFee: true, estimatedValue: true, currency: true, proposalSubmittedAt: true,
         organization: { select: { name: true } },
         signingPartner: { select: { name: true } },
         owner: { select: { name: true } },
@@ -1133,14 +1159,16 @@ reportingRouter.get("/priority-follow-ups", async (req: AuthedRequest, res) => {
       .map((o) => ({
         client: o.organization?.name ?? "Unknown",
         partner: o.signingPartner?.name ?? o.owner?.name ?? "Unassigned",
-        quoted: o.amount != null ? toKes(Number(o.amount), o.currency) : 0,
+        quoted: (o.submittedFee ?? o.approvedQuotedFee ?? o.estimatedValue ?? o.amount) != null
+          ? safeKes(Number(o.submittedFee ?? o.approvedQuotedFee ?? o.estimatedValue ?? o.amount), o.currency)
+          : null,
       }))
-      .sort((a, b) => b.quoted - a.quoted)
+      .sort((a, b) => (b.quoted ?? -1) - (a.quoted ?? -1))
       .slice(0, limit);
 
     if (query.data.format !== "json") {
       sendTabularReport(res, query.data.format, "priority-follow-ups", `Priority follow-ups (${query.data.period})`,
-        ["Client", "Partner", "Quoted (KES)"], rows.map((r) => [r.client, r.partner, r.quoted]));
+        ["Client", "Partner", "Quoted (KES)"], rows.map((r) => [r.client, r.partner, r.quoted ?? "N/A"]));
       return;
     }
     res.json({ success: true, data: { period: query.data.period, periodFrom: pw.win?.from.toISOString() ?? null, periodTo: pw.win?.to.toISOString() ?? null, rows } });
@@ -1150,7 +1178,7 @@ reportingRouter.get("/priority-follow-ups", async (req: AuthedRequest, res) => {
   }
 });
 
-// ── Leads report (every lead with its data) ─────────────────────────────────
+// -- Leads report (every lead with its data) ------
 //
 // The "see all leads with their data" view: BD/Partner get the whole book,
 // a Manager gets their own. Windows on leadReceivedAt so it reads as "leads
@@ -1166,11 +1194,11 @@ reportingRouter.get("/leads", async (req: AuthedRequest, res) => {
     const pw = periodWindow(query.data.period, query.data.from, query.data.to);
     if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
 
-    const scope = opportunityScope(req.user);
+    const scope = { AND: [opportunityScope(req.user), { isArchived: false }] };
     const opps = await prisma.opportunity.findMany({
       where: { ...scope, ...(pw.win ? { leadReceivedAt: { gte: pw.win.from, lte: pw.win.to } } : {}) },
       select: {
-        title: true, service: true, stage: true, amount: true, currency: true,
+        title: true, service: true, stage: true, amount: true, confirmedAwardValue: true, submittedFee: true, approvedQuotedFee: true, estimatedValue: true, currency: true,
         leadSource: true, leadSourceNote: true, leadReceivedAt: true, proposalSubmittedAt: true,
         submissionType: true, businessType: true, wonAt: true,
         organization: { select: { name: true, clientNumber: true, country: true, industry: true } },
@@ -1194,7 +1222,9 @@ reportingRouter.get("/leads", async (req: AuthedRequest, res) => {
       received: day(o.leadReceivedAt),
       submitted: day(o.proposalSubmittedAt),
       stage: o.stage,
-      amount: o.amount != null ? toKes(Number(o.amount), o.currency) : 0,
+      amount: (o.confirmedAwardValue ?? o.submittedFee ?? o.approvedQuotedFee ?? o.estimatedValue ?? o.amount) != null
+        ? safeKes(Number(o.confirmedAwardValue ?? o.submittedFee ?? o.approvedQuotedFee ?? o.estimatedValue ?? o.amount), o.currency)
+        : null,
       owner: o.owner?.name ?? "Unassigned",
       signingPartner: o.signingPartner?.name ?? "",
       submissionType: o.submissionType ?? "",
@@ -1204,7 +1234,7 @@ reportingRouter.get("/leads", async (req: AuthedRequest, res) => {
     if (query.data.format !== "json") {
       sendTabularReport(res, query.data.format, "leads", `Leads (${query.data.period})`,
         ["Client", "Client no.", "Country", "Industry", "Service", "Department", "Source", "Received", "Submitted", "Stage", "Amount (KES)", "Owner", "Signing partner", "Submission type", "Business type"],
-        rows.map((r) => [r.client, r.clientNumber, r.country, r.industry, r.service, r.department, r.source, r.received, r.submitted, r.stage, r.amount, r.owner, r.signingPartner, r.submissionType, r.businessType]));
+        rows.map((r) => [r.client, r.clientNumber, r.country, r.industry, r.service, r.department, r.source, r.received, r.submitted, r.stage, r.amount ?? "N/A", r.owner, r.signingPartner, r.submissionType, r.businessType]));
       return;
     }
     res.json({ success: true, data: { period: query.data.period, periodFrom: pw.win?.from.toISOString() ?? null, periodTo: pw.win?.to.toISOString() ?? null, rows } });
@@ -1214,7 +1244,7 @@ reportingRouter.get("/leads", async (req: AuthedRequest, res) => {
   }
 });
 
-// ── Prequalifications (reported separately from tenders) ────────────────────
+// -- Prequalifications (reported separately from tenders) ------
 
 reportingRouter.get("/prequalifications", async (req: AuthedRequest, res) => {
   try {
@@ -1226,41 +1256,57 @@ reportingRouter.get("/prequalifications", async (req: AuthedRequest, res) => {
     const pw = periodWindow(query.data.period, query.data.from, query.data.to);
     if (!pw.ok) return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: pw.error } });
 
-    const scope = opportunityScope(req.user);
-    const opps = await prisma.opportunity.findMany({
-      where: { ...scope, submissionType: "PREQUALIFICATION", ...(pw.win ? { leadReceivedAt: { gte: pw.win.from, lte: pw.win.to } } : {}) },
+    // Prequalifications are a separate application lifecycle. Acceptance is
+    // never a won engagement, proposal revenue or a Finance booking.
+    const apps = await prisma.prequalification.findMany({
+      where: {
+        AND: [
+          prequalificationScope(req.user),
+          { archivedAt: null },
+          pw.win ? { OR: [{ applicationDate: { gte: pw.win.from, lte: pw.win.to } }, { submittedAt: { gte: pw.win.from, lte: pw.win.to } }] } : {},
+        ],
+      },
       select: {
-        service: true, stage: true, amount: true, currency: true, wonAt: true, proposalSubmittedAt: true,
+        service: true, status: true, cost: true, currency: true,
+        submittedAt: true, acceptedAt: true, rejectedAt: true, expiryAt: true,
         organization: { select: { name: true, country: true } },
         department: { select: { name: true } },
         owner: { select: { name: true } },
       },
-      orderBy: { leadReceivedAt: "desc" },
+      orderBy: { createdAt: "desc" },
       take: 500,
     });
 
     const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "");
-    const rows = opps.map((o) => ({
+    const rows = apps.map((o) => ({
       client: o.organization?.name ?? "Unknown",
       country: o.organization?.country ?? "Unspecified",
       service: o.service,
       department: o.department?.name ?? "",
-      stage: o.stage,
-      amount: o.amount != null ? toKes(Number(o.amount), o.currency) : 0,
+      status: o.status,
+      cost: o.cost != null ? safeKes(Number(o.cost), o.currency) : null,
       owner: o.owner?.name ?? "Unassigned",
-      submitted: day(o.proposalSubmittedAt),
+      submitted: day(o.submittedAt),
+      accepted: day(o.acceptedAt),
+      rejected: day(o.rejectedAt),
+      expires: day(o.expiryAt),
     }));
     const totals = {
       count: rows.length,
-      quoted: rows.reduce((a, r) => a + r.amount, 0),
-      wonCount: opps.filter((o) => o.stage === "WON").length,
-      wonValue: opps.filter((o) => o.stage === "WON").reduce((a, o) => a + (o.amount != null ? toKes(Number(o.amount), o.currency) : 0), 0),
+      submitted: apps.filter((a) => a.status === "SUBMITTED" || a.submittedAt).length,
+      accepted: apps.filter((a) => a.status === "ACCEPTED").length,
+      rejected: apps.filter((a) => a.status === "REJECTED").length,
+      expired: apps.filter((a) => a.status === "EXPIRED").length,
+      cost: rows.reduce((sum, r) => sum + (r.cost ?? 0), 0),
+      wonCount: 0,
+      wonValue: 0,
+      note: "Panel acceptance is not counted as a won engagement or proposal revenue.",
     };
 
     if (query.data.format !== "json") {
       sendTabularReport(res, query.data.format, "prequalifications", `Prequalifications (${query.data.period})`,
-        ["Client", "Country", "Service", "Department", "Stage", "Amount (KES)", "Owner", "Submitted"],
-        rows.map((r) => [r.client, r.country, r.service, r.department, r.stage, r.amount, r.owner, r.submitted]));
+        ["Client", "Country", "Service", "Department", "Status", "Cost (KES)", "Owner", "Submitted", "Accepted", "Expires"],
+        rows.map((r) => [r.client, r.country, r.service, r.department, r.status, r.cost ?? "N/A", r.owner, r.submitted, r.accepted, r.expires]));
       return;
     }
     res.json({ success: true, data: { period: query.data.period, periodFrom: pw.win?.from.toISOString() ?? null, periodTo: pw.win?.to.toISOString() ?? null, rows, totals } });

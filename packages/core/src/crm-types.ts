@@ -1,10 +1,22 @@
 import type { ReportPeriod } from "./reporting";
 import type { LeadSource } from "./lead-source";
 import type { RagResult } from "./rag";
+import type {
+  AwardVerificationStatus,
+  BillingFrequency,
+  CommercialCategory,
+  CredentialMetadata,
+  EngagementLetterStatus,
+  LossReasonCode,
+  OpportunityOutcome,
+  ProposalRevisionView,
+  QualificationStatus,
+  TaxBasis,
+} from "./enterprise-types";
 
 export type { LeadSource };
 
-export type Role = "MARKETING_BD" | "PARTNER" | "MANAGER";
+export type Role = import("./enterprise-types").EnterpriseRole;
 
 /**
  * The single source of truth for the pipeline stages, in pipeline order.
@@ -20,6 +32,10 @@ export const STAGES = [
   "NOT_SUBMITTED",
   "WON",
   "LOST",
+  "WITHDRAWN",
+  "CLIENT_CANCELLED",
+  "NO_AWARD",
+  "NO_BID",
   "NO_REPLY",
   "DEFERRED",
 ] as const;
@@ -49,17 +65,25 @@ export const PROPOSAL_STAGES: readonly Stage[] = [
 ];
 
 /** Stages that close an opportunity out for good. */
-export const TERMINAL_STAGES: readonly Stage[] = ["WON", "LOST", "NO_REPLY"];
+export const TERMINAL_STAGES: readonly Stage[] = [
+  "WON",
+  "LOST",
+  "WITHDRAWN",
+  "CLIENT_CANCELLED",
+  "NO_AWARD",
+  "NO_BID",
+  "NO_REPLY",
+];
 
 export type FollowupStatus = "PENDING" | "COMPLETED" | "CANCELLED";
 
-export type FollowupType = "CALL" | "EMAIL" | "MEETING";
+export type FollowupType = "CALL" | "EMAIL" | "MEETING" | "TASK" | "HANDOVER";
 
 /** How a proposal was submitted (review: RFP/RFQ together, prequal separately). */
 export type SubmissionType = "RFP" | "RFQ" | "PREQUALIFICATION";
 
 /** Commercial nature of a won job (review: acquisition vs account expansion). */
-export type BusinessType = "NEW_BUSINESS" | "CROSS_SELL" | "UPSELL";
+export type BusinessType = CommercialCategory;
 
 export const SUBMISSION_TYPES: readonly SubmissionType[] = [
   "RFP",
@@ -75,12 +99,14 @@ export const SUBMISSION_TYPE_LABELS: Record<SubmissionType, string> = {
 
 export const BUSINESS_TYPES: readonly BusinessType[] = [
   "NEW_BUSINESS",
+  "RENEWAL",
   "CROSS_SELL",
   "UPSELL",
 ];
 
 export const BUSINESS_TYPE_LABELS: Record<BusinessType, string> = {
-  NEW_BUSINESS: "New business",
+  NEW_BUSINESS: "New client",
+  RENEWAL: "Renewal",
   CROSS_SELL: "Cross-selling",
   UPSELL: "Upselling",
 };
@@ -108,6 +134,13 @@ export type Organization = {
   address?: string | null;
   description?: string | null;
   isExistingClient?: boolean;
+  contractingEntityId?: string | null;
+  officeId?: string | null;
+  parentOrganizationId?: string | null;
+  mergedIntoId?: string | null;
+  duplicateReviewRequired?: boolean;
+  isArchived?: boolean;
+  archivedAt?: string | null;
   assignedToId?: string | null;
   assignedDepartmentId?: string | null;
   assignedDepartment?: Pick<Department, "id" | "name"> | null;
@@ -201,6 +234,78 @@ export type Opportunity = {
   signingPartnerId?: string | null;
   signingPartner?: Pick<UserLite, "id" | "name" | "role"> | null;
 
+  // ── Outcome, qualification and source provenance ──
+  outcome?: OpportunityOutcome;
+  outcomeAt?: string | null;
+  onHoldReason?: string | null;
+  qualificationStatus?: QualificationStatus;
+  qualificationDate?: string | null;
+  qualificationRequirement?: string | null;
+  clientDeadlineAt?: string | null;
+  budgetKnown?: number | string | null;
+  budgetCurrency?: string | null;
+  goNoGoAt?: string | null;
+  goNoGoById?: string | null;
+  noGoReason?: string | null;
+  noGoReasonCode?: string | null;
+  sourceReferrerName?: string | null;
+  sourceReferrerOrganization?: string | null;
+  sourceCampaign?: string | null;
+  sourceEvent?: string | null;
+  conflictCheckStatus?: string | null;
+  conflictCheckedAt?: string | null;
+  conflictCheckNotes?: string | null;
+
+  // ── Separate values and award metadata ──
+  estimatedValue?: number | string | null;
+  approvedQuotedFee?: number | string | null;
+  submittedFee?: number | string | null;
+  confirmedAwardValue?: number | string | null;
+  bidPurchaseCost?: number | string | null;
+  awardCurrency?: string | null;
+  bidCostCurrency?: string | null;
+  taxBasis?: TaxBasis;
+  billingFrequency?: BillingFrequency;
+  termMonths?: number | null;
+  wonValueVarianceReason?: string | null;
+  awardDate?: string | null;
+  awardEvidenceReference?: string | null;
+  awardVerificationStatus?: AwardVerificationStatus;
+  engagementLetterStatus?: EngagementLetterStatus;
+  engagementLetterReference?: string | null;
+  awardApprovedById?: string | null;
+  lossReasonCode?: LossReasonCode | null;
+  lossReasonDetail?: string | null;
+  feedbackRequestedAt?: string | null;
+
+  // ── Accountability and delivery dimensions ──
+  nextAction?: string | null;
+  nextActionDueAt?: string | null;
+  nextActionOwnerId?: string | null;
+  reviewerId?: string | null;
+  reviewer?: Pick<UserLite, "id" | "name" | "role"> | null;
+  contractingEntityId?: string | null;
+  officeId?: string | null;
+  serviceCategoryId?: string | null;
+  sourcePrequalificationId?: string | null;
+  isArchived?: boolean;
+  archivedAt?: string | null;
+  reviewRequired?: boolean;
+  reviewReason?: string | null;
+  legacyStage?: string | null;
+
+  proposals?: ProposalRevisionView[] | unknown[];
+  contributors?: { id: string; userId: string; accessLevel: string; user?: Pick<UserLite, "id" | "name" | "role"> }[];
+  allocations?: {
+    id: string;
+    country: string;
+    amount?: number | string | null;
+    percentage?: number | string | null;
+    currency?: string | null;
+    basis: "PERCENT" | "AMOUNT";
+    isFinalized: boolean;
+  }[];
+
   organization?: Organization;
   department?: Department;
   /** Computed on the server, never stored (see rag.ts). */
@@ -225,7 +330,11 @@ export type Followup = {
 export type PipelinePage = {
   items: Opportunity[];
   total: number;
-  counts: Record<Stage | "all" | "overdue", number>;
+  counts: Record<Stage | "all" | "overdue" | "prospects", number>;
+  /** KES value per stage, available only on paginated responses. */
+  values?: Record<Stage, number>;
+  /** Records skipped because no valid exchange rate exists. */
+  valueUnavailableCount?: number;
 };
 
 export type ReportingSummary = {
@@ -256,7 +365,10 @@ export type UserLite = {
   email: string;
   role: Role;
   isAdmin: boolean;
+  isActive?: boolean;
   departmentId?: string | null;
+  supervisorPartnerId?: string | null;
+  supervisorPartner?: { id: string; name: string } | null;
   department?: Department | null;
   headedDepartments?: Pick<Department, "id" | "name">[];
   assignedProspectCount?: number;
@@ -295,6 +407,8 @@ export type BreakdownRow = {
   lostValue: number;
   lostCount: number;
   activeProposalValue: number;
+  /** Values skipped because no valid exchange rate was available. */
+  unavailableValueCount?: number;
 };
 
 export type ReportingBreakdown = {

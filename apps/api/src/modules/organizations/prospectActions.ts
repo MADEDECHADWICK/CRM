@@ -1,5 +1,6 @@
 import { canManageStaff, canCreateProspect, canReassignProspect, canReceiveProspect, isOwnerEligible, type Role } from "@crm/core";
 import type { Prisma } from "../../../generated/prisma/client";
+import { ensureProspectOpportunity } from "./prospectPipeline";
 
 type Actor = { id: string; role: Role; isAdmin?: boolean };
 
@@ -45,7 +46,11 @@ export async function assignAccount(tx: Prisma.TransactionClient, actor: Actor, 
   if (kind === "prospect" && client) throw new ProspectError(409, "NOT_A_PROSPECT", "This account is already a client.");
   if (kind === "client" && !client) throw new ProspectError(409, "NOT_A_CLIENT", "This account is a prospect.");
   const data = await assignmentData(tx, actor, assignedToId, assignedDepartmentId, client);
-  return tx.organization.update({ where, data, include: assignmentInclude });
+  const updated = await tx.organization.update({ where, data, include: assignmentInclude });
+  if (assignedToId !== null || assignedDepartmentId !== null) {
+    await ensureProspectOpportunity(tx, actor, updated.id, assignedToId, assignedDepartmentId);
+  }
+  return updated;
 }
 
 export function assignProspect(tx: Prisma.TransactionClient, actor: Actor, organizationId: string, assignedToId: string | null, assignedDepartmentId?: string | null) {
@@ -57,6 +62,9 @@ type ProspectInput = {
   address?: string | null; email?: string | null; phone?: string | null;
   website?: string | null; assignedToId?: string | null;
   assignedDepartmentId?: string | null;
+  contractingEntityId?: string | null;
+  officeId?: string | null;
+  parentOrganizationId?: string | null;
 };
 
 export async function createProspect(tx: Prisma.TransactionClient, actor: Actor, input: ProspectInput) {
@@ -77,6 +85,16 @@ export async function createProspect(tx: Prisma.TransactionClient, actor: Actor,
     const number = Number(row.clientNumber?.slice(3));
     return Number.isFinite(number) ? Math.max(value, number) : value;
   }, 0);
-  return tx.organization.create({ data: { ...fields, ...assignment,
+  const created = await tx.organization.create({ data: { ...fields, ...assignment,
     clientNumber: `CL-${String(max + 1).padStart(4, "0")}` }, include: assignmentInclude });
+  if (created.assignedToId || created.assignedDepartmentId) {
+    await ensureProspectOpportunity(
+      tx,
+      actor,
+      created.id,
+      created.assignedToId,
+      created.assignedDepartmentId
+    );
+  }
+  return created;
 }

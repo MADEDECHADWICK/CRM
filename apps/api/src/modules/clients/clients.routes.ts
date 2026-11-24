@@ -28,7 +28,7 @@ clientsRouter.get("/", async (req: AuthedRequest, res) => {
   const scope = opportunityScope(req.user);
 
   const q = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
-  const where = { AND: [organizationScope(req.user), clientDirectoryWhere(), directorySearch(q)] };
+  const where = { AND: [organizationScope(req.user), { isArchived: false }, clientDirectoryWhere(), directorySearch(q)] };
   const clients = await prisma.organization.findMany({
     where,
     include: {

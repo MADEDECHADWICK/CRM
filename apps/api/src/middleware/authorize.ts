@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 import { organizationScope, opportunityScope, type AccessUser } from "../lib/accessScope";
-export { organizationScope, opportunityScope, contactScope, noteScope, followupScope } from "../lib/accessScope";
+export { organizationScope, opportunityScope, contactScope, noteScope, followupScope, prequalificationScope } from "../lib/accessScope";
 
 export interface AuthedRequest extends Request {
   user?: AccessUser;
@@ -37,14 +37,42 @@ export async function requireAuth(req: AuthedRequest, res: Response, next: NextF
   // lookup per request is the price of authority that is never stale.
   const user = await prisma.user.findUnique({
     where: { id: payload.id },
-    select: { id: true, role: true, isAdmin: true, departmentId: true, headedDepartments: { select: { id: true } } },
+    select: {
+      id: true,
+      role: true,
+      isAdmin: true,
+      isActive: true,
+      departmentId: true,
+      headedDepartments: { select: { id: true } },
+      accessScopes: {
+        select: {
+          country: true,
+          contractingEntityId: true,
+          officeId: true,
+          departmentId: true,
+          organizationId: true,
+          opportunityId: true,
+        },
+      },
+    },
   });
 
   if (!user) {
     return res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED" } });
   }
 
-  req.user = { id: user.id, role: user.role, isAdmin: user.isAdmin, departmentId: user.departmentId, headedDepartmentIds: user.headedDepartments.map(d => d.id) };
+  if (!user.isActive) {
+    return res.status(403).json({ success: false, error: { code: "ACCOUNT_DISABLED", message: "This account has been disabled." } });
+  }
+
+  req.user = {
+    id: user.id,
+    role: user.role,
+    isAdmin: user.isAdmin,
+    departmentId: user.departmentId,
+    headedDepartmentIds: user.headedDepartments.map(d => d.id),
+    accessScopes: user.accessScopes,
+  };
   next();
 }
 

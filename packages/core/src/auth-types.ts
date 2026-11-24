@@ -1,9 +1,12 @@
+import type { Role } from "./crm-types";
+
 export type AuthUser = {
   id: string;
   name: string;
   email: string;
-  role: "MARKETING_BD" | "PARTNER" | "MANAGER";
+  role: Role;
   isAdmin: boolean;
+  isActive?: boolean;
   departmentId?: string | null;
   department?: { id: string; name: string } | null;
   headedDepartments?: { id: string; name: string }[];

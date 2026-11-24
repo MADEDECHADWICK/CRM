@@ -136,13 +136,36 @@ export async function transitionOpportunity(input: TransitionInput, transaction?
         // BR-007: structured lost reason, only meaningful on a LOST outcome.
         lostReason: toStage === "LOST" ? lostReason ?? null : null,
 
+        // Keep the separate outcome axis in sync for the legacy transition
+        // endpoint. It never rewrites the quote: amount is the value the user
+        // entered for this decision and confirmedAwardValue is only filled when
+        // it is still empty.
+        outcome:
+          toStage === "WON" ? "WON"
+          : toStage === "LOST" ? "LOST"
+          : toStage === "WITHDRAWN" ? "WITHDRAWN"
+          : toStage === "CLIENT_CANCELLED" ? "CLIENT_CANCELLED"
+          : toStage === "NO_AWARD" ? "NO_AWARD"
+          : toStage === "NO_BID" ? "NO_BID"
+          : toStage === "NO_REPLY" ? "NO_RESPONSE"
+          : toStage === "DEFERRED" ? "ON_HOLD"
+          : "OPEN",
+        outcomeAt:
+          ["WON", "LOST", "WITHDRAWN", "CLIENT_CANCELLED", "NO_AWARD", "NO_BID", "NO_REPLY", "DEFERRED"].includes(toStage)
+            ? now
+            : null,
+        confirmedAwardValue: toStage === "WON" ? current.confirmedAwardValue ?? amount : current.confirmedAwardValue,
+        awardDate: toStage === "WON" ? current.awardDate ?? now : current.awardDate,
+        lossReasonCode: toStage === "LOST" ? current.lossReasonCode ?? (lostReason ? "OTHER" : "NOT_SUPPLIED") : current.lossReasonCode,
+        lossReasonDetail: toStage === "LOST" ? current.lossReasonDetail ?? lostReason ?? null : current.lossReasonDetail,
+
         // BR-016: the submission stamp. Never overwritten — the first send
         // is the one that matters for velocity, and a later revision
         // resubmission must not rewrite history.
         proposalSubmittedAt: submittedNow && !current.proposalSubmittedAt ? now : current.proposalSubmittedAt,
-        // Recovery clears the breach marker but not the obligation, for the
-        // reason given above.
-        proposalBreachedAt: recovering ? null : current.proposalBreachedAt,
+        // Recovery and a real submission clear the current overdue flag but
+        // not the explanation debt, for the reason given above.
+        proposalBreachedAt: recovering || submittedNow ? null : current.proposalBreachedAt,
         // An already missed clock must not immediately breach the recovered
         // draft again. A new future deadline, if issued, remains in force.
         ...(clearExpiredDeadline ? { proposalDueAt: null, proposalDueSetAt: null, proposalDueSetById: null } : {}),

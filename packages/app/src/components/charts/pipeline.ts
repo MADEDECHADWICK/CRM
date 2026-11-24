@@ -7,6 +7,7 @@ import {
   STAGE_COLORS,
   STAGE_LABELS,
   STAGES,
+  formatAmount,
   type Opportunity,
   type Stage,
 } from "@crm/core";
@@ -19,7 +20,7 @@ import type { StageBarDatum } from "./StageBarChart";
 // headline number disagree with the real opportunity count.
 export const PIPELINE_ORDER: readonly Stage[] = STAGES;
 
-export type PipelineCount = { stage: Stage; count: number };
+export type PipelineCount = { stage: Stage; count: number; value?: number };
 
 export function countByStage(opportunities: Opportunity[]): PipelineCount[] {
   return PIPELINE_ORDER.map((stage) => ({
@@ -29,11 +30,12 @@ export function countByStage(opportunities: Opportunity[]): PipelineCount[] {
 }
 
 export function pipelineDonut(counts: PipelineCount[]): DonutDatum[] {
-  return counts.map(({ stage, count }) => ({
+  return counts.map(({ stage, count, value }) => ({
     key: stage,
     label: STAGE_LABELS[stage],
     value: count,
     color: STAGE_COLORS[stage].dot,
+    meta: value != null ? formatAmount(value) : undefined,
   }));
 }
 

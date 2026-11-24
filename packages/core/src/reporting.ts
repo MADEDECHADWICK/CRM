@@ -14,9 +14,11 @@ import {
 
 export const REPORT_PERIODS = [
   "all",
+  "day",
   "week",
   "month",
   "quarter",
+  "half_year",
   "year",
   "custom",
 ] as const;
@@ -25,9 +27,11 @@ export type ReportPeriod = (typeof REPORT_PERIODS)[number];
 
 export const REPORT_PERIOD_LABELS: Record<ReportPeriod, string> = {
   all: "All time",
+  day: "Today",
   week: "This week",
   month: "This month",
   quarter: "This quarter",
+  half_year: "This half-year",
   year: "This year",
   custom: "Custom range",
 };
@@ -263,13 +267,17 @@ export function reportPeriodRange(
   }
 
   const from =
-    period === "week"
-      ? startOfWeek(now)
-      : period === "month"
-        ? new Date(now.getFullYear(), now.getMonth(), 1)
-        : period === "quarter"
-          ? startOfQuarter(now)
-          : new Date(now.getFullYear(), 0, 1);
+    period === "day"
+      ? new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      : period === "week"
+        ? startOfWeek(now)
+        : period === "month"
+          ? new Date(now.getFullYear(), now.getMonth(), 1)
+          : period === "quarter"
+            ? startOfQuarter(now)
+            : period === "half_year"
+              ? new Date(now.getFullYear(), now.getMonth() < 6 ? 0 : 6, 1)
+              : new Date(now.getFullYear(), 0, 1);
 
   return { from, to: now };
 }
@@ -344,4 +352,110 @@ export type ScorecardReport = {
   periodTo: string | null;
   rows: ScorecardRow[];
   totals: Omit<ScorecardRow, "key" | "label">;
+};
+// ── Cohort conversion vs period activity ratio ─────────────────────────────
+//
+// These are deliberately separate populations:
+//   - cohort conversion: opportunities FIRST submitted in the selected period,
+//     measured as of a stated date.
+//   - period activity ratio: wins booked in a period / proposals submitted in
+//     that same period. It is not a cohort rate and must not be labelled one.
+
+export type CohortConversionSample = {
+  opportunityId: string;
+  firstSubmittedAt: Date | string | null;
+  submittedValueKes: number | null;
+  outcome: string;
+  outcomeAt: Date | string | null;
+  wonValueKes: number | null;
+  /** True when the submitted value or award value could not be converted. */
+  valueUnavailable?: boolean;
+};
+
+export type CohortConversion = {
+  asOf: string;
+  submittedCount: number;
+  wonCount: number;
+  lostCount: number;
+  openCount: number;
+  pendingCount: number;
+  unmatchedCount: number;
+  submittedValueKes: number;
+  wonValueKes: number;
+  conversionByCount: number | null;
+  conversionByValue: number | null;
+  valueConversionCanExceed100: boolean;
+  unavailableValueCount: number;
+  basis: string;
+};
+
+export function summariseCohortConversion(
+  samples: CohortConversionSample[],
+  asOf: Date = new Date()
+): CohortConversion {
+  const cohort = samples.filter((s) => s.firstSubmittedAt != null);
+  const won = cohort.filter((s) => s.outcome === "WON");
+  const lost = cohort.filter((s) => s.outcome === "LOST");
+  const pending = cohort.filter(
+    (s) => s.outcome === "OPEN" || s.outcome === "ON_HOLD"
+  );
+  const unmatched = cohort.filter(
+    (s) => s.outcome !== "WON" && s.outcome !== "LOST" &&
+      s.outcome !== "OPEN" && s.outcome !== "ON_HOLD"
+  );
+
+  const submittedValueKes = cohort.reduce(
+    (sum, s) => sum + (s.submittedValueKes ?? 0),
+    0
+  );
+  const wonValueKes = won.reduce((sum, s) => sum + (s.wonValueKes ?? 0), 0);
+
+  return {
+    asOf: asOf.toISOString(),
+    submittedCount: cohort.length,
+    wonCount: won.length,
+    lostCount: lost.length,
+    openCount: pending.length,
+    pendingCount: pending.length,
+    unmatchedCount: unmatched.length,
+    submittedValueKes,
+    wonValueKes,
+    conversionByCount: cohort.length ? won.length / cohort.length : null,
+    conversionByValue: submittedValueKes ? wonValueKes / submittedValueKes : null,
+    valueConversionCanExceed100: wonValueKes > submittedValueKes,
+    unavailableValueCount: cohort.filter((s) => s.valueUnavailable).length,
+    basis:
+      "Cohort = distinct opportunities first submitted in the selected period. " +
+      "Pending/unmatched records shown separately. Values converted to KES only where a valid rate exists.",
+  };
+}
+
+export type PeriodActivityRatio = {
+  winsBooked: number;
+  proposalsSubmitted: number;
+  ratio: number | null;
+  basis: string;
+};
+
+export function periodActivityRatio(
+  winsBooked: number,
+  proposalsSubmitted: number
+): PeriodActivityRatio {
+  return {
+    winsBooked,
+    proposalsSubmitted,
+    ratio: proposalsSubmitted ? winsBooked / proposalsSubmitted : null,
+    basis:
+      "Period activity ratio = wins booked in the period / proposals submitted in the period. " +
+      "This is not cohort conversion.",
+  };
+}
+
+export type MetricDisclosure = {
+  period: ReportPeriod;
+  periodFrom: string | null;
+  periodTo: string | null;
+  calculationBasis: string;
+  refreshedAt: string;
+  snapshotId?: string | null;
 };

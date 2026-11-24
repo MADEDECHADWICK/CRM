@@ -18,3 +18,4 @@ export * from "./Segmented";
 export * from "./StatCard";
 export * from "./TextField";
 export * from "./util";
+export * from "./webStyles";

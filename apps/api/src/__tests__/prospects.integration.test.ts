@@ -6,7 +6,7 @@ import { organizationScope } from "../lib/accessScope";
 
 // Explicitly opt in against a migrated database. All verification records live
 // in one transaction which MUST roll back; CI unit tests need no database.
-test("prospects can be created, assigned, reassigned and cleared without creating deals", {
+test("prospects can be created, assigned, reassigned and cleared while only prospect-stage pipeline records are created", {
   skip: process.env.RUN_DB_INTEGRATION !== "true", timeout: 180_000,
 }, async () => {
   const { prisma } = await import("../lib/prisma");
@@ -79,7 +79,13 @@ test("prospects can be created, assigned, reassigned and cleared without creatin
       await assert.rejects(assignAccount(tx, partner, client.id, manager.id), rejects(403, "FORBIDDEN"));
       await assert.rejects(assignAccount(tx, admin, client.id, admin.id), rejects(400, "INVALID_ASSIGNEE"));
       await assert.rejects(assignProspect(tx, admin, randomUUID(), partner.id), rejects(404, "NOT_FOUND"));
-      assert.equal(await tx.opportunity.count({ where: { organizationId: { in: organizationIds } } }), 0);
+      // Assignment may auto-create an initial Prospect-stage opportunity, but
+      // it must never invent a lead, proposal, win or revenue.
+      const autoOpportunities = await tx.opportunity.findMany({
+        where: { organizationId: { in: organizationIds } },
+        select: { stage: true, amount: true, confirmedAwardValue: true },
+      });
+      assert.ok(autoOpportunities.every((opp) => opp.stage === "PROSPECT" && opp.amount == null && opp.confirmedAwardValue == null));
       throw rollback;
     }, { timeout: 120_000, maxWait: 30_000 }), error => error === rollback);
     assert.equal(await prisma.organization.count({ where: { id: { in: organizationIds } } }), 0);

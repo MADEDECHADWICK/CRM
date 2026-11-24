@@ -40,7 +40,13 @@ export type OwnerRole = (typeof OWNER_ROLES)[number];
  * means the next role added to the enum is denied by default and somebody has
  * to choose otherwise, instead of inheriting a permission nobody granted.
  */
-export const CREATOR_ROLES = ["MARKETING_BD", "PARTNER", "MANAGER"] as const;
+export const CREATOR_ROLES = [
+  "MARKETING_BD",
+  "PARTNER",
+  "MANAGER",
+  "PROPOSAL_COORDINATOR",
+  "COUNTRY_LEAD",
+] as const;
 
 export type CreatorRole = (typeof CREATOR_ROLES)[number];
 
@@ -62,7 +68,7 @@ export function canCreateOpportunity(role: Role): boolean {
  * site for the same reason as everything else in this file.
  */
 export function canManageStaff(role: Role, isAdmin = false): boolean {
-  return isAdmin || role === "MARKETING_BD";
+  return isAdmin || role === "MARKETING_BD" || role === "IT_ADMIN";
 }
 
 /**

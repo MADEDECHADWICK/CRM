@@ -21,19 +21,20 @@ function isBD(user: AuthedRequest["user"]): boolean {
 
 
 const listQuerySchema = z.object({
-  role: z.enum(["MARKETING_BD", "PARTNER", "MANAGER"]).optional(),
+  role: z.enum(["MARKETING_BD", "PARTNER", "MANAGER", "PROPOSAL_COORDINATOR", "TECHNICAL_REVIEWER", "COUNTRY_LEAD", "IT_ADMIN"]).optional(),
 });
 
 const createSchema = z.object({
   name: z.string().trim().min(1),
   email: z.string().trim().toLowerCase().email(),
-  role: z.enum(["PARTNER", "MANAGER"]),
+  role: z.enum(["MARKETING_BD", "PARTNER", "MANAGER", "PROPOSAL_COORDINATOR", "TECHNICAL_REVIEWER", "COUNTRY_LEAD", "IT_ADMIN"]),
   isAdmin: z.boolean().optional(),
   // Required, with a length floor. A shared hardcoded default password made
   // every new account login-able with a publicly known secret; the admin
   // setting the first password is the only safe default.
   password: z.string().min(8, "Password must be at least 8 characters"),
   departmentId: z.string().uuid().optional(),
+  supervisorPartnerId: z.string().uuid().optional(),
 });
 
 const SELECT_FIELDS = {
@@ -123,6 +124,16 @@ usersRouter.post("/", async (req: AuthedRequest, res) => {
     }
   }
 
+  if (parsed.data.role === "MANAGER" && !parsed.data.supervisorPartnerId) {
+    return res.status(400).json({ success: false, error: { code: "SUPERVISOR_REQUIRED", message: "Choose the Partner this team lead reports to." } });
+  }
+  if (parsed.data.supervisorPartnerId) {
+    const supervisor = await prisma.user.findUnique({ where: { id: parsed.data.supervisorPartnerId }, select: { role: true, isActive: true } });
+    if (!supervisor || !supervisor.isActive || supervisor.role !== "PARTNER") {
+      return res.status(400).json({ success: false, error: { code: "INVALID_SUPERVISOR", message: "A team lead must report to an active Partner." } });
+    }
+  }
+
   const user = await prisma.user.create({
     data: {
       name: parsed.data.name,
@@ -131,6 +142,7 @@ usersRouter.post("/", async (req: AuthedRequest, res) => {
       isAdmin: parsed.data.isAdmin ?? false,
       passwordHash: bcrypt.hashSync(parsed.data.password, 10),
       departmentId: parsed.data.departmentId,
+      supervisorPartnerId: parsed.data.supervisorPartnerId,
     },
     select: SELECT_FIELDS,
   });

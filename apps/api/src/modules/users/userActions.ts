@@ -6,11 +6,23 @@ import type { AccessUser } from "../../lib/accessScope";
 
 const name = z.string().trim().min(1).max(200);
 const email = z.string().trim().toLowerCase().email();
+const STAFF_ROLES = [
+  "MARKETING_BD",
+  "PARTNER",
+  "MANAGER",
+  "PROPOSAL_COORDINATOR",
+  "TECHNICAL_REVIEWER",
+  "COUNTRY_LEAD",
+  "IT_ADMIN",
+] as const;
+
 export const staffUpdateSchema = z.object({
   name: name.optional(), email: email.optional(),
-  role: z.enum(["PARTNER", "MANAGER"]).optional(),
+  role: z.enum(STAFF_ROLES).optional(),
   isAdmin: z.boolean().optional(),
+  isActive: z.boolean().optional(),
   departmentId: z.string().uuid().nullable().optional(),
+  supervisorPartnerId: z.string().uuid().nullable().optional(),
 }).strict().refine(value => Object.keys(value).length > 0, "Provide details to update.");
 export const profileUpdateSchema = z.object({
   name: name.optional(), email: email.optional(),
@@ -19,7 +31,9 @@ export const profileUpdateSchema = z.object({
 }).strict().refine(value => value.name !== undefined || value.email !== undefined || value.newPassword !== undefined, "Provide details to update.");
 
 export const publicUserSelect = {
-  id: true, name: true, email: true, role: true, isAdmin: true, departmentId: true,
+  id: true, name: true, email: true, role: true, isAdmin: true, isActive: true, departmentId: true,
+  supervisorPartnerId: true,
+  supervisorPartner: { select: { id: true, name: true } },
   department: { select: { id: true, name: true } },
   headedDepartments: { select: { id: true, name: true }, orderBy: { name: "asc" as const } },
 } as const;
@@ -60,10 +74,26 @@ export async function updateUser(tx: Prisma.TransactionClient, actor: AccessUser
     }
     const nextRole = values.role ?? user.role;
     const nextDepartment = values.departmentId === undefined ? user.departmentId : values.departmentId;
+    if (values.supervisorPartnerId) {
+      const supervisor = await tx.user.findUnique({ where: { id: values.supervisorPartnerId }, select: { role: true, isActive: true } });
+      if (!supervisor || !supervisor.isActive || supervisor.role !== "PARTNER") {
+        throw new UserUpdateError(400, "INVALID_SUPERVISOR", "A team lead must report to an active Partner.");
+      }
+    }
+    const nextSupervisor = values.supervisorPartnerId === undefined ? user.supervisorPartnerId : values.supervisorPartnerId;
+    if (nextRole === "MANAGER" && !nextSupervisor) {
+      throw new UserUpdateError(400, "SUPERVISOR_REQUIRED", "Choose the Partner this team lead reports to.");
+    }
     if (nextRole === "MANAGER" && user.headedDepartments.some(d => d.id !== nextDepartment)) {
       throw new UserUpdateError(409, "HEADSHIP_CONFLICT", "Reappoint the heads of other departments before making this person a Manager or changing their primary department.");
     }
-    data = values;
+    // Disabling a leaver preserves history. The account is blocked at request
+    // time by requireAuth; records remain attributable.
+    data = {
+      ...values,
+      ...(values.isActive === false ? { deactivatedAt: new Date() } : {}),
+      ...(values.isActive === true ? { deactivatedAt: null } : {}),
+    };
   }
   if (typeof data.email === "string") {
     const duplicate = await tx.user.findFirst({ where: { email: { equals: data.email, mode: "insensitive" }, id: { not: id } }, select: { id: true } });

@@ -95,10 +95,16 @@ test("pipeline lifecycle, reminders, deadlines, reports, scope and paging work e
       const clock = new Date(now.getTime() + 2 * day);
       assert.equal(await flagOverdueProposal(tx, late.id, clock), true);
       assert.equal(await flagOverdueProposal(tx, late.id, clock), false);
-      assert.equal(await tx.stageHistoryEntry.count({ where: { opportunityId: late.id, actorType: "SYSTEM" } }), 1);
+      const overdueFlag = await tx.opportunity.findUniqueOrThrow({ where: { id: late.id } });
+      // An overdue internal deadline raises a flag/escalation. It must NOT
+      // assert that the proposal was never submitted.
+      assert.equal(overdueFlag.stage, "LEAD");
+      assert.ok(overdueFlag.proposalBreachedAt);
+      assert.equal(overdueFlag.breachNoteRequired, true);
       assert.equal(await tx.followup.count({ where: { opportunityId: late.id } }), 1);
+      assert.ok(await tx.auditEvent.count({ where: { entityType: "Opportunity", entityId: late.id, actorType: "SYSTEM" } }));
       const revised = await setProposalDeadline({ opportunityId: late.id, dueAt: future, setById: adminId }, tx);
-      assert.equal(revised.breachNoteRequired, true); assert.equal(revised.stage, "NOT_SUBMITTED");
+      assert.equal(revised.breachNoteRequired, true); assert.equal(revised.stage, "LEAD");
       await recordBreachExplanation({ opportunityId: late.id, authorId: partnerId, explanation: "Awaiting records" }, tx);
       assert.equal(await tx.followup.count({ where: { opportunityId: late.id, status: "PENDING" } }), 0);
       await move(late.id, "PROPOSAL");
@@ -109,8 +115,9 @@ test("pipeline lifecycle, reminders, deadlines, reports, scope and paging work e
       await tx.opportunity.update({ where: { id: recovered.id }, data: { proposalDueAt: new Date(now.getTime() - day) } });
       assert.equal(await flagOverdueProposal(tx, recovered.id, now), true);
       const recovery = await move(recovered.id, "PROPOSAL");
-      assert.equal(recovery.proposalDueAt, null); assert.equal(recovery.breachNoteRequired, true);
-      assert.equal(await flagOverdueProposal(tx, recovered.id, now), false, "Recovering without a new deadline must not breach the same draft again immediately");
+      assert.ok(recovery.proposalDueAt, "The issued deadline and its history are preserved");
+      assert.equal(recovery.breachNoteRequired, true);
+      assert.equal(await flagOverdueProposal(tx, recovered.id, now), false, "The same overdue flag must not be raised twice");
 
       // The overdue record deliberately sorts beyond the old 500-record cap.
       const pagingTerm = `paging-${suffix}`;
@@ -140,7 +147,7 @@ test("pipeline lifecycle, reminders, deadlines, reports, scope and paging work e
         const result = await listPipeline(tx, partner, { paginated: true, q: ragTerm, rag: status }, null, now);
         assert.deepEqual(result.items.map(row => row.title).sort(), expected, `${status} SQL filtering agrees with displayed RAG at boundaries`);
       }
-      console.log("Verified prospect → lead → proposal → awaiting → won; lost/no reply/deferred; reminders, deadline recovery, scoped reporting and 606-row pagination.");
+      console.log("Verified prospect â†’ lead â†’ proposal â†’ awaiting â†’ won; lost/no reply/deferred; reminders, deadline recovery, scoped reporting and 606-row pagination.");
       throw rollback;
     }, { isolationLevel: "Serializable", maxWait: 30000, timeout: 180000 }), error => error === rollback);
     assert.equal(await prisma.organization.count({ where: { id: orgId } }), 0);

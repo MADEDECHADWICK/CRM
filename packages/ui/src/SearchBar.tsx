@@ -8,6 +8,7 @@ import { Pressable, StyleSheet, TextInput, View } from "react-native";
 import { tokens } from "@crm/core";
 
 import { Icon, IconSet } from "./icons";
+import { webTextInputReset } from "./webStyles";
 
 type SearchBarProps = {
   value: string;
@@ -32,7 +33,7 @@ export function SearchBar({
       />
 
       <TextInput
-        style={styles.input}
+        style={[styles.input, webTextInputReset]}
         accessibilityLabel={placeholder}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}

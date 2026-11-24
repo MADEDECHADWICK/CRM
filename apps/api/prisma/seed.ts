@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { PrismaClient } from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { reportPeriodRange, REPORT_PERIODS, type ReportPeriod, type LeadSource } from "@crm/core";
+import { ensureProposalChecklist } from "./proposal-checklist";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
@@ -113,7 +114,7 @@ async function main() {
   });
   const grace = await prisma.user.upsert({
     where: { email: "grace@firm.co.ke" },
-    update: { passwordHash: bcrypt.hashSync(DEMO_PASSWORD, 10) },
+    update: { passwordHash: bcrypt.hashSync(DEMO_PASSWORD, 10), role: "MARKETING_BD", isActive: true },
     create: {
       name: "Grace BD",
       email: "grace@firm.co.ke",
@@ -122,20 +123,118 @@ async function main() {
     },
   });
 
+  const david = await prisma.user.upsert({
+    where: { email: "david@firm.co.ke" },
+    update: { passwordHash: bcrypt.hashSync(DEMO_PASSWORD, 10), role: "PROPOSAL_COORDINATOR", isActive: true },
+    create: {
+      name: "David Proposal Coordinator",
+      email: "david@firm.co.ke",
+      role: "PROPOSAL_COORDINATOR",
+      passwordHash: bcrypt.hashSync(DEMO_PASSWORD, 10),
+    },
+  });
+  const lisa = await prisma.user.upsert({
+    where: { email: "lisa@firm.co.ke" },
+    update: { passwordHash: bcrypt.hashSync(DEMO_PASSWORD, 10), role: "TECHNICAL_REVIEWER", isActive: true },
+    create: {
+      name: "Lisa Technical Reviewer",
+      email: "lisa@firm.co.ke",
+      role: "TECHNICAL_REVIEWER",
+      passwordHash: bcrypt.hashSync(DEMO_PASSWORD, 10),
+    },
+  });
+  const peter = await prisma.user.upsert({
+    where: { email: "peter@firm.co.ke" },
+    update: { passwordHash: bcrypt.hashSync(DEMO_PASSWORD, 10), role: "COUNTRY_LEAD", isActive: true },
+    create: {
+      name: "Peter Country Lead",
+      email: "peter@firm.co.ke",
+      role: "COUNTRY_LEAD",
+      passwordHash: bcrypt.hashSync(DEMO_PASSWORD, 10),
+    },
+  });
+  const itAdmin = await prisma.user.upsert({
+    where: { email: "it@firm.co.ke" },
+    update: { passwordHash: bcrypt.hashSync(DEMO_PASSWORD, 10), role: "IT_ADMIN", isActive: true },
+    create: {
+      name: "IT Administrator",
+      email: "it@firm.co.ke",
+      role: "IT_ADMIN",
+      passwordHash: bcrypt.hashSync(DEMO_PASSWORD, 10),
+    },
+  });
+
   const audit = await prisma.department.upsert({
     where: { name: "Audit" },
-    update: {},
-    create: { name: "Audit" },
+    update: { headId: john.id },
+    create: { name: "Audit", headId: john.id },
   });
   const tax = await prisma.department.upsert({
+    where: { name: "Tax" },
+    update: { headId: mary.id },
+    create: { name: "Tax", headId: mary.id },
+  });
+  const advisory = await prisma.department.upsert({
+    where: { name: "Advisory" },
+    update: {},
+    create: { name: "Advisory" },
+  });
+
+  await prisma.user.update({ where: { id: john.id }, data: { role: "PARTNER", departmentId: audit.id, isActive: true } });
+  await prisma.user.update({ where: { id: mary.id }, data: { role: "MANAGER", departmentId: tax.id, supervisorPartnerId: john.id, isActive: true } });
+  await prisma.user.update({ where: { id: david.id }, data: { departmentId: null } });
+  await prisma.user.update({ where: { id: lisa.id }, data: { departmentId: null } });
+  await prisma.user.update({ where: { id: peter.id }, data: { departmentId: null } });
+
+  // Firm dimensions are separate from the client's country.
+  const ronaldsKenya = await prisma.contractingEntity.upsert({
+    where: { name: "Ronalds Africa (Kenya)" },
+    update: { isActive: true },
+    create: { name: "Ronalds Africa (Kenya)", code: "RON-KE", country: "Kenya", baseCurrency: "KES" },
+  });
+  const selego = await prisma.contractingEntity.upsert({
+    where: { name: "Selego" },
+    update: { isActive: true },
+    create: { name: "Selego", code: "SEL", country: "Uganda", baseCurrency: "UGX" },
+  });
+  const nairobiOffice = await prisma.office.upsert({
+    where: { name: "Nairobi Office" },
+    update: { entityId: ronaldsKenya.id, country: "Kenya" },
+    create: { name: "Nairobi Office", country: "Kenya", entityId: ronaldsKenya.id },
+  });
+  const kampalaOffice = await prisma.office.upsert({
+    where: { name: "Kampala Office" },
+    update: { entityId: selego.id, country: "Uganda" },
+    create: { name: "Kampala Office", country: "Uganda", entityId: selego.id },
+  });
+  const auditCategory = await prisma.serviceCategory.upsert({
+    where: { name: "Audit & Assurance" },
+    update: {},
+    create: { name: "Audit & Assurance" },
+  });
+  const taxCategory = await prisma.serviceCategory.upsert({
     where: { name: "Tax" },
     update: {},
     create: { name: "Tax" },
   });
+  const advisoryCategory = await prisma.serviceCategory.upsert({
+    where: { name: "Advisory" },
+    update: {},
+    create: { name: "Advisory" },
+  });
 
-  // Clean previous demo runs (cascade removes stage history/follow-ups).
+  // Clean previous demo runs (cascade removes proposals, stage history,
+  // followers, allocations and contributor rows).
   await prisma.opportunity.deleteMany({
-    where: { OR: [{ title: { startsWith: "Demo —" } }, { title: "FY2027 Statutory Audit" }] },
+    where: { OR: [{ title: { startsWith: "Demo" } }, { title: "FY2027 Statutory Audit" }] },
+  });
+  await prisma.prequalification.deleteMany({ where: { externalReference: { startsWith: "DEMO-" } } });
+  await prisma.checklistTemplate.deleteMany({ where: { name: { startsWith: "Demo " } } });
+  await prisma.approvalPolicy.deleteMany({ where: { name: { startsWith: "Demo " } } });
+  await prisma.credential.deleteMany({ where: { name: { startsWith: "Demo " } } });
+  await prisma.userAccessScope.deleteMany({ where: { userId: peter.id } });
+  await prisma.notification.deleteMany({
+    where: { type: { startsWith: "DEMO_" }, userId: { in: [john.id, mary.id, grace.id, david.id, lisa.id, peter.id, itAdmin.id] } },
   });
 
   const orgs: Record<string, { id: string }> = {};
@@ -180,7 +279,16 @@ async function main() {
     breachNoteRequired?: boolean;
     breachNoteDueAt?: Date;
     // Review: how the won job was won (defaults to new business).
-    businessType?: "NEW_BUSINESS" | "CROSS_SELL" | "UPSELL";
+    businessType?: "NEW_BUSINESS" | "RENEWAL" | "CROSS_SELL" | "UPSELL";
+    submittedFee?: number;
+    confirmedAwardValue?: number;
+    lossReasonCode?: "PRICE_FEES" | "TECHNICAL_SCORE" | "EXPERIENCE_CREDENTIALS" | "RELATIONSHIP_INCUMBENT" | "SCOPE_MISMATCH" | "PROCUREMENT_COMPLIANCE" | "OTHER" | "NOT_SUPPLIED";
+    awardEvidenceReference?: string;
+    awardVerificationStatus?: "UNVERIFIED" | "PENDING" | "VERIFIED" | "DISPUTED";
+    engagementLetterStatus?: "NOT_STARTED" | "SENT" | "SIGNED" | "RECEIVED" | "NOT_REQUIRED";
+    engagementLetterReference?: string;
+    nextAction?: string;
+    nextActionDueAt?: Date;
   };
 
   const now = new Date();
@@ -200,6 +308,8 @@ async function main() {
       enteredAt: withinWeek(0),
       leadSource: "WEBSITE",
       leadReceivedAt: daysFromNow(-4),
+      nextAction: "Confirm whether the client has a live service requirement",
+      nextActionDueAt: daysFromNow(4),
     },
     {
       // This week — active proposal entered this week.
@@ -217,6 +327,8 @@ async function main() {
       // 12 days out — lands in the amber band, so the pipeline shows a
       // healthy mix of colours rather than everything green.
       proposalDueAt: daysFromNow(12),
+      nextAction: "Finish draft proposal and collect outstanding inputs",
+      nextActionDueAt: daysFromNow(2),
     },
     {
       // This week — proposal sent, client still reading it. Sits between the
@@ -239,6 +351,8 @@ async function main() {
       // improve — the deadline is not the send date.
       proposalDueAt: withinWeek(1),
       proposalSubmittedAt: withinWeek(2),
+      nextAction: "Chase client feedback and confirm evaluation timeline",
+      nextActionDueAt: daysFromNow(6),
     },
     {
       // This week — won today.
@@ -249,6 +363,14 @@ async function main() {
       stage: "WON",
       service: "Statutory audit FY2026",
       amount: 450000,
+      submittedFee: 450000,
+      confirmedAwardValue: 470000,
+      awardEvidenceReference: "DEMO-AWARD-001",
+      awardVerificationStatus: "VERIFIED",
+      engagementLetterStatus: "SIGNED",
+      engagementLetterReference: "DEMO-EL-001",
+      nextAction: "Complete Finance/service handover",
+      nextActionDueAt: daysFromNow(2),
       owner: "john",
       enteredAt: withinWeek(0),
       leadSource: "EXHIBITION",
@@ -267,6 +389,8 @@ async function main() {
       enteredAt: withinMonth(8),
       leadSource: "TENDER",
       leadReceivedAt: daysFromNow(-11),
+      nextAction: "Qualify requirement and confirm the decision-maker",
+      nextActionDueAt: daysFromNow(1),
     },
     {
       // This month — won mid-month.
@@ -277,7 +401,11 @@ async function main() {
       stage: "WON",
       service: "Tax registration & TIN issuance",
       amount: 320000,
+      submittedFee: 320000,
+      confirmedAwardValue: 310000,
       businessType: "CROSS_SELL",
+      engagementLetterStatus: "SIGNED",
+      engagementLetterReference: "DEMO-EL-002",
       owner: "john",
       enteredAt: withinMonth(15),
       leadSource: "WALK_IN",
@@ -295,6 +423,7 @@ async function main() {
       owner: "mary",
       enteredAt: withinMonth(18),
       lostReason: "Client chose an internal audit team",
+      lossReasonCode: "NOT_SUPPLIED",
       leadSource: "COLD_OUTREACH",
       leadReceivedAt: daysFromNow(-40),
     },
@@ -343,6 +472,8 @@ async function main() {
       // 3 days out — red band, still recoverable. This is the deal the
       // pipeline is meant to make you look at.
       proposalDueAt: daysFromNow(3),
+      nextAction: "Complete technical review and resolve review comments",
+      nextActionDueAt: daysFromNow(1),
     },
     {
       // A missed drafting deadline, already flagged by the sweep. Seeds the
@@ -365,6 +496,8 @@ async function main() {
       proposalBreachedAt: daysFromNow(-2),
       breachNoteRequired: true,
       breachNoteDueAt: daysFromNow(1),
+      nextAction: "Explain missed deadline and recover the draft",
+      nextActionDueAt: daysFromNow(1),
     },
     {
       // This quarter — won in July.
@@ -375,7 +508,11 @@ async function main() {
       stage: "WON",
       service: "Laboratory audit support",
       amount: 1200000,
+      submittedFee: 1200000,
+      confirmedAwardValue: 1200000,
       businessType: "UPSELL",
+      awardEvidenceReference: "DEMO-AWARD-003",
+      awardVerificationStatus: "VERIFIED",
       owner: "mary",
       enteredAt: withinQuarter(70),
       leadSource: "TENDER",
@@ -393,6 +530,7 @@ async function main() {
       owner: "john",
       enteredAt: withinQuarter(55),
       lostReason: "Scope changes requested by client",
+      lossReasonCode: "SCOPE_MISMATCH",
       leadSource: "SOCIAL_MEDIA",
       leadReceivedAt: daysFromNow(-71),
     },
@@ -419,6 +557,9 @@ async function main() {
       stage: "WON",
       service: "Cooperative audit FY2025",
       amount: 900000,
+      submittedFee: 900000,
+      confirmedAwardValue: 900000,
+      businessType: "RENEWAL",
       owner: "john",
       enteredAt: withinYear(200),
       leadSource: "PARTNER_REFERRAL",
@@ -473,8 +614,16 @@ async function main() {
     },
   ];
 
+  const createdOpportunities: Record<string, { id: string; stage: string; ownerId: string | null }> = {};
+
   for (const opp of demo) {
     const organization = await mid(opp.org, opp.industry);
+    const outcome =
+      opp.stage === "WON" ? "WON" as const
+      : opp.stage === "LOST" ? "LOST" as const
+      : opp.stage === "NO_REPLY" ? "NO_RESPONSE" as const
+      : opp.stage === "DEFERRED" ? "ON_HOLD" as const
+      : "OPEN" as const;
     const created = await prisma.opportunity.create({
       data: {
         title: opp.title,
@@ -485,10 +634,43 @@ async function main() {
         stage: opp.stage,
         service: opp.service,
         ...(opp.amount ? { amount: opp.amount } : {}),
+        ...(opp.submittedFee != null ? { submittedFee: opp.submittedFee } : {}),
+        ...(opp.confirmedAwardValue != null ? { confirmedAwardValue: opp.confirmedAwardValue } : {}),
+        currency: "KES",
+        outcome,
+        outcomeAt: ["WON", "LOST", "NO_REPLY", "DEFERRED"].includes(opp.stage) ? opp.enteredAt : null,
+        qualificationStatus: opp.stage === "PROSPECT" ? "UNQUALIFIED" : "QUALIFIED",
+        qualificationDate: opp.stage === "PROSPECT" ? null : opp.leadReceivedAt,
+        ...(opp.lossReasonCode ? { lossReasonCode: opp.lossReasonCode } : {}),
+        ...(opp.stage === "WON" ? {
+          awardDate: opp.enteredAt,
+          awardCurrency: "KES",
+          awardEvidenceReference: opp.awardEvidenceReference ?? `DEMO-AWARD-${opp.title.slice(-6)}`,
+          awardVerificationStatus: opp.awardVerificationStatus ?? "PENDING",
+          engagementLetterStatus: opp.engagementLetterStatus ?? "SENT",
+          engagementLetterReference: opp.engagementLetterReference ?? null,
+        } : {}),
+        contractingEntityId: opp.org === "MombasaPort Logistics" ? selego.id : ronaldsKenya.id,
+        officeId: opp.org === "MombasaPort Logistics" ? kampalaOffice.id : nairobiOffice.id,
+        serviceCategoryId:
+          opp.department === "TAX"
+            ? taxCategory.id
+            : opp.service.toLowerCase().includes("advisory")
+              ? advisoryCategory.id
+              : auditCategory.id,
+        reviewerId: ["PROPOSAL", "AWAITING_FEEDBACK", "WON", "LOST"].includes(opp.stage) ? lisa.id : null,
+        nextAction: opp.nextAction ?? (["PROSPECT", "LEAD", "PROPOSAL", "AWAITING_FEEDBACK", "NOT_SUBMITTED", "DEFERRED"].includes(opp.stage)
+          ? "Review the opportunity and update the next step"
+          : null),
+        nextActionDueAt: opp.nextActionDueAt ?? (["PROSPECT", "LEAD", "PROPOSAL", "AWAITING_FEEDBACK", "NOT_SUBMITTED", "DEFERRED"].includes(opp.stage)
+          ? daysFromNow(3)
+          : null),
+        nextActionOwnerId: ownerOf[opp.owner],
         stageEnteredAt: opp.enteredAt,
         wonAt: opp.stage === "WON" ? opp.enteredAt : undefined,
         lostAt: opp.stage === "LOST" ? opp.enteredAt : undefined,
         lostReason: opp.lostReason,
+        lossReasonDetail: opp.lostReason,
         revisitAt: opp.revisitAt,
         createdAt: opp.enteredAt,
 
@@ -522,6 +704,7 @@ async function main() {
           : {}),
       },
     });
+    createdOpportunities[opp.title] = { id: created.id, stage: created.stage, ownerId: created.ownerId };
 
     // The NOT_SUBMITTED deal needs a real system-authored history entry and
     // an open breach debt, or it would be a deal in a stage with no record
@@ -541,6 +724,438 @@ async function main() {
       });
     }
   }
+
+  // Real Ronalds proposal quality checklist, imported as configuration.
+  // The workflow below uses this active version for every demo proposal.
+  const checklistVersion = await ensureProposalChecklist(prisma, grace.id);
+
+  await prisma.approvalPolicy.create({
+    data: {
+      name: "Demo approval policy — proposals under KES 1,000,000",
+      description: "Demo only. Replace with Ronalds' approved approval limits.",
+      minAmount: 0,
+      maxAmount: 1_000_000,
+      currency: "KES",
+      requiredRole: "MANAGER",
+      requiredApprovals: 1,
+      prohibitsSelfApproval: true,
+      isActive: true,
+      createdById: grace.id,
+    },
+  });
+
+  const demoCredential = await prisma.credential.create({
+    data: {
+      name: "Demo ISO 27001 certificate",
+      ownerId: lisa.id,
+      reference: "DEMO-CRED-001",
+      version: "2026",
+      expiryAt: daysFromNow(180),
+      status: "ACTIVE",
+      notes: "Demo metadata only. No file is stored in the CRM.",
+      createdById: grace.id,
+    },
+  });
+
+  type ProposalDemoInput = {
+    opportunityTitle: string;
+    revisionStatus: "PENDING_INPUTS" | "IN_PREPARATION" | "IN_REVIEW" | "CHANGES_REQUESTED" | "APPROVED" | "SUBMITTED" | "NOT_SUBMITTED";
+    checklist: "pending" | "partial" | "complete";
+    feeAmount: number;
+    reviewApproved?: boolean;
+    partnerApproved?: boolean;
+    submittedAt?: Date;
+    externalReference?: string;
+    withCredential?: boolean;
+  };
+
+  const addProposalDemo = async (input: ProposalDemoInput) => {
+    const opp = createdOpportunities[input.opportunityTitle];
+    if (!opp) return;
+    const proposal = await prisma.proposal.create({
+      data: {
+        opportunityId: opp.id,
+        title: `Proposal — ${input.opportunityTitle.replace(/^Demo — /, "")}`,
+        createdById: david.id,
+        technicalOwnerId: mary.id,
+        bdOwnerId: david.id,
+        currentRevisionNumber: 1,
+      },
+    });
+    const itemStatuses = checklistVersion.items.map((item, index) => {
+      if (input.checklist === "pending") return { item, status: "PENDING" as const };
+      if (input.checklist === "partial") {
+        return index < 2 ? { item, status: "COMPLETE" as const } : { item, status: "PENDING" as const };
+      }
+      return { item, status: item.requiresReview ? "REVIEWED" as const : "COMPLETE" as const };
+    });
+
+    const revision = await prisma.proposalRevision.create({
+      data: {
+        proposalId: proposal.id,
+        revisionNumber: 1,
+        status: input.revisionStatus,
+        workflowStage: input.submittedAt
+          ? "SUBMITTED"
+          : input.revisionStatus === "IN_REVIEW"
+            ? "BD_QUALITY_REVIEW"
+            : input.revisionStatus === "NOT_SUBMITTED"
+              ? "RETURNED_TO_TECHNICAL"
+              : "TECHNICAL_PREPARATION",
+        technicalCompletedAt: ["IN_REVIEW", "SUBMITTED", "APPROVED"].includes(input.revisionStatus) ? daysFromNow(-4) : null,
+        technicalCompletedById: ["IN_REVIEW", "SUBMITTED", "APPROVED"].includes(input.revisionStatus) ? mary.id : null,
+        bdReviewedAt: ["SUBMITTED", "APPROVED"].includes(input.revisionStatus) ? daysFromNow(-3) : null,
+        bdReviewedById: ["SUBMITTED", "APPROVED"].includes(input.revisionStatus) ? david.id : null,
+        partnerSignedAt: input.partnerApproved ? daysFromNow(-2) : null,
+        partnerSignedById: input.partnerApproved ? john.id : null,
+        returnedAt: input.revisionStatus === "NOT_SUBMITTED" ? daysFromNow(-2) : null,
+        returnReason: input.revisionStatus === "NOT_SUBMITTED" ? "Demo: deadline missed and technical changes still required." : null,
+        checklistTemplateVersionId: checklistVersion.id,
+        summary: `Demo revision for ${input.opportunityTitle.replace(/^Demo — /, "")}`,
+        feeAmount: input.feeAmount,
+        feeCurrency: "KES",
+        scopeSummary: "Demo scope: statutory audit and related reporting.",
+        keyTerms: "Demo terms: fees exclusive of taxes and disbursements.",
+        materialSnapshot: {
+          approvedQuotedFee: input.feeAmount,
+          currency: "KES",
+          scope: "Demo scope: statutory audit and related reporting.",
+        },
+        createdById: david.id,
+        ...(input.partnerApproved ? { approvedAt: input.submittedAt ?? daysFromNow(-3) } : {}),
+        checklistItems: {
+          create: itemStatuses.map(({ item, status }) => ({
+            templateItemId: item.id,
+            code: item.code,
+            label: item.label,
+            required: true,
+            requiresReview: item.requiresReview,
+            sortOrder: item.sortOrder,
+            status,
+            responsibleRole: item.responsibleRole,
+            responsibleUserId: item.requiresReview ? lisa.id : david.id,
+            ...(status === "COMPLETE" || status === "REVIEWED"
+              ? { completedAt: daysFromNow(-4), completedById: david.id }
+              : {}),
+            ...(status === "REVIEWED"
+              ? { reviewedAt: daysFromNow(-3), reviewedById: lisa.id }
+              : {}),
+            comment: status === "PENDING" ? "Demo: awaiting input." : "Demo: checked.",
+          })),
+        },
+      },
+    });
+
+    if (input.reviewApproved) {
+      await prisma.proposalApproval.create({
+        data: {
+          revisionId: revision.id,
+          kind: "REVIEW",
+          status: "APPROVED",
+          actorId: mary.id,
+          actorRole: "MANAGER",
+          decidedAt: daysFromNow(-3),
+          comment: "Demo: team lead confirmed the technical work is complete.",
+          amountAtDecision: input.feeAmount,
+          currency: "KES",
+        },
+      });
+    }
+    if (input.partnerApproved) {
+      await prisma.proposalApproval.create({
+        data: {
+          revisionId: revision.id,
+          kind: "APPROVAL",
+          status: "APPROVED",
+          actorId: john.id,
+          actorRole: "PARTNER",
+          decidedAt: daysFromNow(-2),
+          comment: "Demo: signing Partner approved the proposal after BD quality review.",
+          amountAtDecision: input.feeAmount,
+          currency: "KES",
+          selfApproval: false,
+        },
+      });
+    }
+    if (input.submittedAt) {
+      await prisma.proposalSubmission.create({
+        data: {
+          revisionId: revision.id,
+          submittedAt: input.submittedAt,
+          channel: "Email",
+          externalReference: input.externalReference ?? "DEMO-SUBMISSION",
+          proofReference: `${input.externalReference ?? "DEMO-SUBMISSION"}-PROOF`,
+          isFirstSubmission: true,
+          submittedById: grace.id,
+          notes: "Demo submission record. No document is stored.",
+        },
+      });
+    }
+    if (input.withCredential) {
+      await prisma.proposalCredentialReference.create({
+        data: {
+          revisionId: revision.id,
+          credentialId: demoCredential.id,
+          credentialVersion: demoCredential.version,
+          note: "Demo credential reference only.",
+        },
+      });
+    }
+    return { proposal, revision };
+  };
+
+  await addProposalDemo({
+    opportunityTitle: "Demo — KKTel network audit proposal",
+    revisionStatus: "IN_PREPARATION",
+    checklist: "partial",
+    feeAmount: 680000,
+  });
+  await addProposalDemo({
+    opportunityTitle: "Demo — CoastalTelecom ad-hoc audit",
+    revisionStatus: "IN_REVIEW",
+    checklist: "complete",
+    feeAmount: 750000,
+    reviewApproved: true,
+  });
+  await addProposalDemo({
+    opportunityTitle: "Demo — Kenya Tea Packers IFRS advisory proposal",
+    revisionStatus: "SUBMITTED",
+    checklist: "complete",
+    feeAmount: 520000,
+    reviewApproved: true,
+    partnerApproved: true,
+    submittedAt: daysFromNow(-2),
+    externalReference: "DEMO-RFP-001",
+    withCredential: true,
+  });
+  await addProposalDemo({
+    opportunityTitle: "Demo — GreenGrocer statutory audit",
+    revisionStatus: "SUBMITTED",
+    checklist: "complete",
+    feeAmount: 450000,
+    reviewApproved: true,
+    partnerApproved: true,
+    submittedAt: daysFromNow(-4),
+    externalReference: "DEMO-RFP-002",
+    withCredential: true,
+  });
+  await addProposalDemo({
+    opportunityTitle: "Demo — CityBank SOX readiness",
+    revisionStatus: "SUBMITTED",
+    checklist: "complete",
+    feeAmount: 300000,
+    reviewApproved: true,
+    partnerApproved: true,
+    submittedAt: daysFromNow(-60),
+    externalReference: "DEMO-RFP-003",
+  });
+  await addProposalDemo({
+    opportunityTitle: "Demo — RiftValley proposed audit",
+    revisionStatus: "NOT_SUBMITTED",
+    checklist: "partial",
+    feeAmount: 390000,
+  });
+
+  // Explicit record sharing: David sees two assigned opportunities, Lisa is
+  // the reviewer, and the rest of the client database stays out of scope.
+  await prisma.opportunityContributor.createMany({
+    data: [
+      { opportunityId: createdOpportunities["Demo — KKTel network audit proposal"].id, userId: david.id, accessLevel: "EDIT", assignedById: john.id },
+      { opportunityId: createdOpportunities["Demo — CoastalTelecom ad-hoc audit"].id, userId: david.id, accessLevel: "VIEW", assignedById: john.id },
+      { opportunityId: createdOpportunities["Demo — Kenya Tea Packers IFRS advisory proposal"].id, userId: david.id, accessLevel: "EDIT", assignedById: john.id },
+      { opportunityId: createdOpportunities["Demo — CoastalTelecom ad-hoc audit"].id, userId: lisa.id, accessLevel: "EDIT", assignedById: john.id },
+      { opportunityId: createdOpportunities["Demo — Kenya Tea Packers IFRS advisory proposal"].id, userId: lisa.id, accessLevel: "VIEW", assignedById: john.id },
+      { opportunityId: createdOpportunities["Demo — GreenGrocer statutory audit"].id, userId: lisa.id, accessLevel: "VIEW", assignedById: john.id },
+    ],
+    skipDuplicates: true,
+  });
+
+  // Multi-country delivery allocation, finalized and reconciled to 100%.
+  await prisma.opportunityAllocation.createMany({
+    data: [
+      { opportunityId: createdOpportunities["Demo — Kenya Tea Packers IFRS advisory proposal"].id, country: "Kenya", percentage: 60, currency: "KES", basis: "PERCENT", isFinalized: true },
+      { opportunityId: createdOpportunities["Demo — Kenya Tea Packers IFRS advisory proposal"].id, country: "Tanzania", percentage: 40, currency: "KES", basis: "PERCENT", isFinalized: true },
+    ],
+  });
+
+  // Separate prequalification lifecycle. Acceptance is not a win.
+  const hfBank = await prisma.organization.findFirstOrThrow({ where: { name: "HF Bank" } });
+  const nairobiWater = await mid("Nairobi Water", "Utilities");
+  await prisma.prequalification.create({
+    data: {
+      organizationId: hfBank.id,
+      service: "Supplier panel — internal audit",
+      departmentId: audit.id,
+      ownerId: mary.id,
+      status: "ACCEPTED",
+      applicationDate: withinQuarter(80),
+      submittedAt: withinQuarter(76),
+      acceptedAt: withinQuarter(40),
+      cost: 50000,
+      currency: "KES",
+      validityFrom: withinQuarter(40),
+      expiryAt: daysFromNow(300),
+      externalReference: "DEMO-PREQ-001",
+      notes: "Demo: accepted panel application. This is not a won engagement.",
+      createdById: grace.id,
+    },
+  });
+  const submittedPrequalification = await prisma.prequalification.create({
+    data: {
+      organizationId: nairobiWater.id,
+      service: "Supplier panel — tax advisory",
+      departmentId: tax.id,
+      ownerId: peter.id,
+      status: "SUBMITTED",
+      applicationDate: withinMonth(20),
+      submittedAt: withinMonth(18),
+      cost: 35000,
+      currency: "KES",
+      validityFrom: withinMonth(18),
+      expiryAt: daysFromNow(90),
+      externalReference: "DEMO-PREQ-002",
+      notes: "Demo: submitted and awaiting the panel decision.",
+      createdById: grace.id,
+    },
+  });
+  await prisma.opportunity.create({
+    data: {
+      title: "Demo — Nairobi Water panel tender",
+      organizationId: nairobiWater.id,
+      departmentId: tax.id,
+      service: "Tax advisory panel tender",
+      createdById: grace.id,
+      ownerId: peter.id,
+      stage: "LEAD",
+      outcome: "OPEN",
+      qualificationStatus: "QUALIFIED",
+      qualificationDate: withinMonth(10),
+      amount: 260000,
+      estimatedValue: 260000,
+      currency: "KES",
+      leadSource: "TENDER",
+      leadReceivedAt: withinMonth(10),
+      stageEnteredAt: withinMonth(10),
+      contractingEntityId: ronaldsKenya.id,
+      officeId: nairobiOffice.id,
+      serviceCategoryId: taxCategory.id,
+      sourcePrequalificationId: submittedPrequalification.id,
+      nextAction: "Confirm tender eligibility from the panel approval",
+      nextActionDueAt: daysFromNow(2),
+      nextActionOwnerId: peter.id,
+      reviewerId: lisa.id,
+    },
+  });
+
+  // Follow-up examples: overdue, upcoming, breach explanation and handover.
+  await prisma.followup.createMany({
+    data: [
+      {
+        type: "CALL",
+        note: "Overdue: chase the HF Bank decision-maker for the internal audit",
+        dueAt: daysFromNow(-2),
+        opportunityId: createdOpportunities["Demo — HF Bank internal audit"].id,
+        assignedToId: mary.id,
+        createdById: grace.id,
+      },
+      {
+        type: "EMAIL",
+        note: "Chase Kenya Tea Packers feedback on the submitted proposal",
+        dueAt: daysFromNow(6),
+        opportunityId: createdOpportunities["Demo — Kenya Tea Packers IFRS advisory proposal"].id,
+        assignedToId: john.id,
+        createdById: grace.id,
+      },
+      {
+        type: "HANDOVER",
+        note: "Finance and service-team handover for won engagement: GreenGrocer statutory audit",
+        dueAt: new Date(),
+        opportunityId: createdOpportunities["Demo — GreenGrocer statutory audit"].id,
+        assignedToId: john.id,
+        createdById: grace.id,
+      },
+      {
+        type: "TASK",
+        note: 'Explain why "Demo — RiftValley proposed audit" missed its BD drafting deadline',
+        dueAt: daysFromNow(1),
+        opportunityId: createdOpportunities["Demo — RiftValley proposed audit"].id,
+        assignedToId: mary.id,
+        createdById: grace.id,
+      },
+      {
+        type: "TASK",
+        note: "Obtain feedback on why PearlHospital payroll audit was lost (reason not supplied)",
+        dueAt: daysFromNow(3),
+        opportunityId: createdOpportunities["Demo — PearlHospital payroll audit"].id,
+        assignedToId: mary.id,
+        createdById: grace.id,
+      },
+    ],
+  });
+
+  // Country lead Peter is scoped to Uganda only. This is a portfolio scope,
+  // not firm-wide access.
+  await prisma.userAccessScope.create({
+    data: { userId: peter.id, country: "Uganda" },
+  });
+
+  // Group-account relationship: independent legal entities under one group.
+  const abcHoldings = await mid("ABC Retail Holdings", "Retail");
+  await prisma.organization.updateMany({
+    where: { name: { in: ["ABC Retail Ltd", "GreenGrocer Ltd"] } },
+    data: { parentOrganizationId: abcHoldings.id },
+  });
+
+  // Assign every demo organization to the first opportunity's owner and
+  // department. Partner/Manager scopes then see their own work, while David
+  // and Lisa remain contributor-only because they have no department scope.
+  const demoOrganizations = await prisma.opportunity.findMany({
+    where: { title: { startsWith: "Demo " } },
+    select: { organizationId: true, ownerId: true, departmentId: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const assignedOrganizationIds = new Set<string>();
+  for (const row of demoOrganizations) {
+    if (assignedOrganizationIds.has(row.organizationId)) continue;
+    assignedOrganizationIds.add(row.organizationId);
+    await prisma.organization.update({
+      where: { id: row.organizationId },
+      data: {
+        assignedToId: row.ownerId,
+        assignedDepartmentId: row.departmentId,
+        assignedById: grace.id,
+        assignedAt: new Date(),
+      },
+    });
+  }
+  await prisma.organization.update({
+    where: { id: abcHoldings.id },
+    data: { assignedToId: john.id, assignedDepartmentId: audit.id, assignedById: grace.id, assignedAt: new Date() },
+  });
+
+  // In-app notifications demonstrate the queue without external delivery.
+  await prisma.notification.createMany({
+    data: [
+      { userId: john.id, type: "DEMO_HANDOVER", title: "Won opportunity — handover required", body: "Complete the Finance/service handover for GreenGrocer statutory audit.", entityType: "Opportunity", entityId: createdOpportunities["Demo — GreenGrocer statutory audit"].id },
+      { userId: mary.id, type: "DEMO_OVERDUE", title: "Overdue follow-up", body: "HF Bank internal audit follow-up is overdue.", entityType: "Opportunity", entityId: createdOpportunities["Demo — HF Bank internal audit"].id },
+      { userId: david.id, type: "DEMO_PROPOSAL", title: "Proposal revision in preparation", body: "KKTel network audit proposal needs outstanding inputs.", entityType: "Opportunity", entityId: createdOpportunities["Demo — KKTel network audit proposal"].id },
+      { userId: lisa.id, type: "DEMO_REVIEW", title: "Review assigned", body: "You are the reviewer on the CoastalTelecom proposal.", entityType: "Opportunity", entityId: createdOpportunities["Demo — CoastalTelecom ad-hoc audit"].id },
+      { userId: peter.id, type: "DEMO_SCOPE", title: "Uganda portfolio", body: "Your country scope includes Uganda accounts and the Nairobi Water panel tender.", entityType: "UserAccessScope", entityId: peter.id },
+      { userId: itAdmin.id, type: "DEMO_CONFIG", title: "Configuration available", body: "Proposal checklists, approval policies and access scopes are configurable.", entityType: "SystemSetting", entityId: "demo" },
+      { userId: mary.id, type: "DEMO_TECHNICAL_ASSIGNED", title: "You are team lead on a proposal", body: "Prepare the technical proposal for KKTel network audit, then acknowledge it is complete.", entityType: "Opportunity", entityId: createdOpportunities["Demo — KKTel network audit proposal"].id },
+      { userId: david.id, type: "DEMO_BD_ASSIGNED", title: "You are BD owner on a proposal", body: "Complete the Proposal Quality Review Checklist for KKTel network audit.", entityType: "Opportunity", entityId: createdOpportunities["Demo — KKTel network audit proposal"].id },
+    ],
+  });
+
+  // Demo-only weighted pipeline probabilities so the weighted pipeline report
+  // has a value. Ronalds must replace these with approved probabilities.
+  await prisma.systemSetting.upsert({
+    where: { key: "pipeline.weightedProbabilityByStage" },
+    update: { value: { PROSPECT: 0.1, LEAD: 0.25, PROPOSAL: 0.5, AWAITING_FEEDBACK: 0.7 }, description: "Demo only. Replace with approved probabilities." },
+    create: { key: "pipeline.weightedProbabilityByStage", value: { PROSPECT: 0.1, LEAD: 0.25, PROPOSAL: 0.5, AWAITING_FEEDBACK: 0.7 }, category: "Reporting", description: "Demo only. Replace with approved probabilities.", updatedById: grace.id },
+  });
+
+  console.log("Demo proposal/checklist/approval/prequalification data created.");
 
   // Named people at each client. Distinct from the generic company email /
   // phone on Organization — this is who you actually speak to.
@@ -699,10 +1314,15 @@ async function main() {
   console.log({
     partner: john.email,
     manager: mary.email,
-    bd: grace.email,
+    "head of marketing & bd": grace.email,
+    "proposal coordinator": david.email,
+    "technical reviewer": lisa.email,
+    "country lead (Uganda)": peter.email,
+    "IT administrator": itAdmin.email,
   });
-  console.log("Seeded", demo.length, "opportunities across periods.");
+  console.log("Seeded", demo.length, "core opportunities plus prequalification and panel-tender examples.");
   console.log("Seeded", demoContacts.length, "client contacts.");
+  console.log("Seeded 6 proposals/revisions using the Ronalds Proposal Quality Review Checklist, plus approval policy, credential reference and multi-country allocation.");
 
   // Prove the period buckets resolve to different, real numbers — running the
   // exact same reportPeriodRange the API uses (all roles see all data here).
@@ -716,7 +1336,7 @@ async function main() {
     diff[period] = count;
     console.log(
       `${period.padEnd(7)} count=${count}` +
-        (range ? `  [${range.from.toLocaleDateString()} – ${range.to.toLocaleDateString()}]` : "")
+        (range ? `  [${range.from.toLocaleDateString()} - ${range.to.toLocaleDateString()}]` : "")
     );
   }
   console.log("Per-period counts:", diff);

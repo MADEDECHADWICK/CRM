@@ -80,6 +80,14 @@ authRouter.post("/login", async (req, res) => {
       });
     }
 
+    if (!user.isActive) {
+      recordLoginFailure(key);
+      return res.status(403).json({
+        success: false,
+        error: { code: "ACCOUNT_DISABLED", message: "This account has been disabled." },
+      });
+    }
+
     // Make sure this user has a password configured
     if (!user.passwordHash) {
       recordLoginFailure(key);

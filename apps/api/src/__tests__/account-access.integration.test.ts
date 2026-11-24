@@ -74,7 +74,10 @@ test("account assignments isolate members, departments, related data, totals and
       assert.deepEqual(await visibleIds(undefined), []);
       assert.deepEqual(await visibleIds(actors.admin), [...accountIds].sort());
 
-      assert.equal(await tx.organization.count({ where: { AND: [{ id: { in: accountIds } }, organizationScope(actors.partner), prospectDirectoryWhere()] } }), 2);
+      // All fixture accounts already have a LEAD/WON opportunity, so none is
+      // still an untouched prospect. Prospects only contains accounts whose
+      // opportunities are all at the initial PROSPECT stage (or none at all).
+      assert.equal(await tx.organization.count({ where: { AND: [{ id: { in: accountIds } }, organizationScope(actors.partner), prospectDirectoryWhere()] } }), 0);
       assert.equal(await tx.organization.count({ where: { AND: [{ id: { in: accountIds } }, organizationScope(actors.partner), clientDirectoryWhere()] } }), 2);
       assert.equal(await tx.organization.count({ where: { AND: [{ id: { in: accountIds } }, organizationScope(actors.admin), clientDirectoryWhere()] } }), 5);
       assert.equal(await tx.organization.count({ where: { AND: [{ id: { in: accountIds } }, organizationScope(actors.partner), directorySearch("Verification scope")] } }), 4);

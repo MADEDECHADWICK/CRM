@@ -18,7 +18,6 @@ import {
   LEAD_SOURCE_LABELS,
   needsOwnerOverrideReason,
   canReassign,
-  canCreateOpportunity,
   ownerEligible,
   rankOwnerCandidates,
   RAG_LABELS,
@@ -61,6 +60,7 @@ import {
   SearchBar,
   Section,
   Segmented,
+  webTextInputReset,
 } from "@crm/ui";
 
 import { useAuth } from "../auth/AuthContext";
@@ -76,7 +76,7 @@ import { ContactFormSheet } from "../components/ContactFormSheet";
 
 type FilterKey =
   | "all"
-  | "prospect"
+  | "prospects"
   | "lead"
   | "proposal"
   | "awaiting"
@@ -88,7 +88,6 @@ type FilterKey =
   | "noReply";
 
 const FILTER_STAGE: Partial<Record<FilterKey, Stage>> = {
-  prospect: "PROSPECT",
   lead: "LEAD",
   proposal: "PROPOSAL",
   awaiting: "AWAITING_FEEDBACK",
@@ -106,7 +105,7 @@ const FILTER_RAG: Partial<Record<FilterKey, RagStatus>> = {
 // Short label for the chip — the full "Awaiting Feedback" would crowd the row.
 const FILTER_LABEL: Record<FilterKey, string> = {
   all: "All",
-  prospect: "Prospect",
+  prospects: "Prospects",
   lead: "Lead",
   proposal: "Proposal",
   awaiting: "Awaiting",
@@ -120,7 +119,7 @@ const FILTER_LABEL: Record<FilterKey, string> = {
 
 const FILTER_ORDER: readonly FilterKey[] = [
   "all",
-  "prospect",
+  "prospects",
   "lead",
   "proposal",
   "awaiting",
@@ -143,28 +142,19 @@ function fmtDate(iso: string): string {
       });
 }
 
-export function OpportunitiesScreen({ initialOrganization = null, onCreateHandled }: {
-  initialOrganization?: Organization | null; onCreateHandled?: () => void;
-}) {
+export function OpportunitiesScreen() {
   const { token, user } = useAuth();
-  const canCreate = !!user && canCreateOpportunity(user.role);
 
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [showAddForm, setShowAddForm] = useState(!!initialOrganization);
-  const [creationOrganization, setCreationOrganization] = useState(initialOrganization);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState<PipelinePage["counts"] | null>(null);
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const sequence = useRef(0);
-  useEffect(() => {
-    if (!initialOrganization) return;
-    setCreationOrganization(initialOrganization); setShowAddForm(true); onCreateHandled?.();
-  }, [initialOrganization, onCreateHandled]);
   useEffect(() => { const timer = setTimeout(() => setSearch(query.trim()), 250); return () => clearTimeout(timer); }, [query]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -177,6 +167,7 @@ export function OpportunitiesScreen({ initialOrganization = null, onCreateHandle
     setBusy(true);
     try {
       const params = new URLSearchParams({ paginated: "true", limit: String(DIRECTORY_PAGE_SIZE), offset: String(page * DIRECTORY_PAGE_SIZE), q: search });
+      if (filter === "prospects") params.set("view", "prospects");
       if (FILTER_STAGE[filter]) params.set("stage", FILTER_STAGE[filter]!);
       if (FILTER_RAG[filter]) params.set("rag", FILTER_RAG[filter]!);
       const data = await apiFetch<PipelinePage>(`/opportunities?${params}`, token);
@@ -262,16 +253,6 @@ export function OpportunitiesScreen({ initialOrganization = null, onCreateHandle
           icon={IconSet.Pipeline}
           title="Pipeline"
           subtitle="Every opportunity, end to end"
-          right={
-            canCreate ? (
-              <Button
-                icon={showAddForm ? IconSet.Close : IconSet.Add}
-                title={showAddForm ? "Close form" : "Add opportunity"}
-                size="sm"
-                onPress={() => setShowAddForm((open) => !open)}
-              />
-            ) : undefined
-          }
         />
 
         <Segmented
@@ -280,7 +261,7 @@ export function OpportunitiesScreen({ initialOrganization = null, onCreateHandle
           options={FILTER_ORDER.map((key) => ({
             key,
             label: FILTER_LABEL[key],
-            count: counts?.[FILTER_STAGE[key] ?? (key === "overdue" ? "overdue" : "all")] ?? 0,
+            count: counts?.[FILTER_STAGE[key] ?? (key === "overdue" ? "overdue" : key === "prospects" ? "prospects" : "all")] ?? 0,
           }))}
         />
 
@@ -292,26 +273,14 @@ export function OpportunitiesScreen({ initialOrganization = null, onCreateHandle
           />
         </View>
 
-        {showAddForm && token ? (
-          <AddDealForm
-            token={token}
-            initialOrganization={creationOrganization}
-            onSaved={id => {
-              setShowAddForm(false); setCreationOrganization(null); setSelectedId(id);
-              void load();
-            }}
-          />
-        ) : null}
-
         <DirectoryPager page={page} total={total} busy={busy} onChange={setPage} />
         {opportunities.length === 0 ? (
           <EmptyState
             icon={IconSet.Pipeline}
-            title={counts?.all === 0 && !search ? "Start your first opportunity" : "No matching opportunities"}
+            title={counts?.all === 0 && !search ? "No prospects in your pipeline yet" : "No matching opportunities"}
             subtitle={counts?.all === 0 && !search
-              ? "Your prospects are ready. Choose an organization and the service you want to pursue to start tracking progress."
+              ? "Assign a prospect to a team member or department. It will appear here automatically as a prospect-stage opportunity."
               : "Try another stage or search term."}
-            action={canCreate && !showAddForm ? <Button title="Add opportunity" icon={IconSet.Add} onPress={() => setShowAddForm(true)} /> : undefined}
           />
         ) : (
           opportunities.map((opportunity) => (
@@ -2095,6 +2064,7 @@ const styles = StyleSheet.create({
     borderColor: tokens.color.border,
     paddingHorizontal: 14,
     ...tokens.type.body,
+    ...webTextInputReset,
     color: tokens.color.ink,
   },
 
@@ -2123,6 +2093,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     ...tokens.type.body,
+    ...webTextInputReset,
     color: tokens.color.ink,
   },
 

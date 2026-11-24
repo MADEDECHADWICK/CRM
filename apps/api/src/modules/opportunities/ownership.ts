@@ -221,9 +221,11 @@ export async function reassignOpportunity(input: {
       select: {
         id: true,
         organizationId: true,
+        stage: true,
         ownerId: true,
         createdById: true,
         breachNoteRequired: true,
+        organization: { select: { assignedToId: true, assignedDepartmentId: true } },
       },
     });
 
@@ -251,7 +253,7 @@ export async function reassignOpportunity(input: {
 
     const target = await tx.user.findUnique({
       where: { id: newOwnerId },
-      select: { id: true, role: true },
+      select: { id: true, role: true, departmentId: true },
     });
 
     if (!target) {
@@ -265,7 +267,23 @@ export async function reassignOpportunity(input: {
       );
     }
 
-    await assertOwnerCanAccessAccount(tx, newOwnerId, opp.organizationId);
+    const accountUnassigned = !opp.organization?.assignedToId && !opp.organization?.assignedDepartmentId;
+    if (accountUnassigned && opp.stage === "PROSPECT") {
+      // A prospect that has never been assigned can be picked up directly from
+      // the pipeline. Assign the account at the same time so the new owner can
+      // actually see it; assigned accounts still require an account assignment.
+      await tx.organization.update({
+        where: { id: opp.organizationId },
+        data: {
+          assignedToId: newOwnerId,
+          ...(target.departmentId ? { assignedDepartmentId: target.departmentId } : {}),
+          assignedById: actor.id,
+          assignedAt: new Date(),
+        },
+      });
+    } else {
+      await assertOwnerCanAccessAccount(tx, newOwnerId, opp.organizationId);
+    }
 
     const updated = await tx.opportunity.update({
       where: { id: opportunityId },
@@ -297,7 +315,10 @@ export async function reassignOpportunity(input: {
         where: {
           opportunityId,
           status: "PENDING",
-          note: { contains: "was not submitted by its BD deadline" },
+          OR: [
+            { note: { contains: "missed its BD drafting deadline" } },
+            { note: { contains: "was not submitted by its BD deadline" } },
+          ],
         },
         data: { assignedToId: newOwnerId },
       });

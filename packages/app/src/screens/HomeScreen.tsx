@@ -84,6 +84,7 @@ export function HomeScreen({ onOpenClient, onNavigate }: HomeScreenProps) {
 
   const [summary, setSummary] = useState<ReportingSummary | null>(null);
   const [pipelineCounts, setPipelineCounts] = useState<PipelinePage["counts"] | null>(null);
+  const [pipelineValues, setPipelineValues] = useState<PipelinePage["values"] | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactQuery, setContactQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -102,6 +103,7 @@ export function HomeScreen({ onOpenClient, onNavigate }: HomeScreenProps) {
 
       setSummary(summaryData);
       setPipelineCounts(opportunityData.counts);
+      setPipelineValues(opportunityData.values ?? null);
       setContacts(contactData);
       setError(null);
     } catch (err) {
@@ -126,10 +128,15 @@ export function HomeScreen({ onOpenClient, onNavigate }: HomeScreenProps) {
   }
 
   const pipeline = useMemo(() => {
-    const counts = STAGES.map(stage => ({ stage, count: pipelineCounts?.[stage] ?? 0 }));
+    const counts = STAGES.map(stage => ({
+      stage,
+      count: pipelineCounts?.[stage] ?? 0,
+      value: pipelineValues?.[stage] ?? 0,
+    }));
     const total = counts.reduce((sum, item) => sum + item.count, 0);
-    return { counts, total };
-  }, [pipelineCounts]);
+    const totalValue = counts.reduce((sum, item) => sum + item.value, 0);
+    return { counts, total, totalValue };
+  }, [pipelineCounts, pipelineValues]);
 
   // Idle state shows only a short preview — with 1000+ clients a full list
   // would be unusable on a phone. Searching is the way to find anyone else,

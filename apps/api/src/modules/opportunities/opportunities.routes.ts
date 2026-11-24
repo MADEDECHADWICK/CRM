@@ -17,6 +17,7 @@ import {
   LEAD_SOURCES,
   SUBMISSION_TYPES,
   BUSINESS_TYPES,
+  OPPORTUNITY_OUTCOMES,
   RAG_LABELS,
   ragFor,
   type Stage,
@@ -68,6 +69,9 @@ const listQuerySchema = z
     to: z.string().datetime().optional(),
     ownerId: z.string().uuid().optional(),
     departmentId: z.string().uuid().optional(),
+    includeArchived: z.enum(["true", "false"]).optional(),
+    outcome: z.enum(OPPORTUNITY_OUTCOMES).optional(),
+    view: z.enum(["prospects"]).optional(),
   })
   .extend(paginationSchema.shape);
 
@@ -115,6 +119,23 @@ const createBodySchema = z.object({
   // accepted on input because leads are often written up days after the
   // first conversation and backdating matters for the velocity reports.
   leadReceivedAt: z.string().datetime().optional(),
+  sourceReferrerName: z.string().optional(),
+  sourceReferrerOrganization: z.string().optional(),
+  sourceCampaign: z.string().optional(),
+  sourceEvent: z.string().optional(),
+  qualificationRequirement: z.string().optional(),
+  clientDeadlineAt: z.string().datetime().optional(),
+  budgetKnown: z.number().nonnegative().optional(),
+  budgetCurrency: z.string().optional(),
+  eligibilityNotes: z.string().optional(),
+  decisionMakerContactId: z.string().uuid().optional(),
+  contractingEntityId: z.string().uuid().optional(),
+  officeId: z.string().uuid().optional(),
+  serviceCategoryId: z.string().uuid().optional(),
+  reviewerId: z.string().uuid().optional(),
+  nextAction: z.string().optional(),
+  nextActionDueAt: z.string().datetime().optional(),
+  nextActionOwnerId: z.string().uuid().optional(),
 });
 
 // `reason` is mandatory and unconditional. It was briefly optional with `note`
@@ -154,7 +175,9 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
   }
 
   const result = await prisma.$transaction(tx => listPipeline(tx, req.user!, {
-    ...query.data, paginated: query.data.paginated === "true",
+    ...query.data,
+    paginated: query.data.paginated === "true",
+    includeArchived: query.data.includeArchived === "true",
   }, range), { isolationLevel: "RepeatableRead" });
   res.json({ success: true, data: query.data.paginated === "true" ? result : result.items });
 });

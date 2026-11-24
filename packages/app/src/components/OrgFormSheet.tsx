@@ -201,7 +201,7 @@ export function OrgFormSheet({
             />
 
             <TextField
-              label="Switchboard email"
+              label="Client email"
               value={form.email}
               onChangeText={(value) => patch({ email: value })}
               placeholder="info@client.co.ke"
@@ -211,7 +211,7 @@ export function OrgFormSheet({
             />
 
             <TextField
-              label="Switchboard phone"
+              label="Client phone"
               value={form.phone}
               onChangeText={(value) => patch({ phone: value })}
               placeholder="+254 700 000 000"

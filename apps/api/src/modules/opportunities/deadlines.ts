@@ -132,7 +132,7 @@ export async function recordBreachExplanation(input: {
     // Only a real missed deadline may acquire an explanation. An outstanding
     // explanation remains actionable after recovery clears the breach marker.
     if (!opp.proposalBreachedAt && !opp.breachNoteRequired) {
-      throw new DeadlineRejected("This opportunity was never flagged as not submitted.");
+      throw new DeadlineRejected("This opportunity was never flagged as overdue.");
     }
 
     if (opp.breachNoteClearedAt) {
@@ -162,7 +162,10 @@ export async function recordBreachExplanation(input: {
       where: {
         opportunityId,
         status: "PENDING",
-        note: { contains: "was not submitted by its BD deadline" },
+        OR: [
+          { note: { contains: "missed its BD drafting deadline" } },
+          { note: { contains: "was not submitted by its BD deadline" } },
+        ],
       },
       data: { status: "COMPLETED", completedAt: new Date() },
     });

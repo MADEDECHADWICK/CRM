@@ -83,6 +83,8 @@ const TYPE_ICONS: Record<FollowupType, (typeof IconSet)[keyof typeof IconSet]> =
   CALL: IconSet.Phone,
   EMAIL: IconSet.Mail,
   MEETING: IconSet.Calendar,
+  TASK: IconSet.Bell,
+  HANDOVER: IconSet.Send,
 };
 
 function noonUtc(date: Date): string {

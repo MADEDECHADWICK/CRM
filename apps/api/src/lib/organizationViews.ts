@@ -2,11 +2,20 @@ import type { Prisma } from "../../generated/prisma/client";
 
 // Classification is independent of visibility; callers AND it with access.
 export function clientDirectoryWhere(): Prisma.OrganizationWhereInput {
-  return { OR: [{ isExistingClient: true }, { opportunities: { some: { stage: "WON" } } }] };
+  return { isArchived: false, OR: [{ isExistingClient: true }, { opportunities: { some: { stage: "WON" } } }] };
 }
 
 export function prospectDirectoryWhere(): Prisma.OrganizationWhereInput {
-  return { isExistingClient: false, opportunities: { none: { stage: "WON" } } };
+  // A true prospect is an untouched account: no won work and no opportunity
+  // that has moved beyond the initial PROSPECT stage. Once a lead, proposal or
+  // tender exists, the account belongs in the pipeline stages and "All", not
+  // in Prospects. Organisations with no opportunity at all are still prospects
+  // (they have not been worked yet).
+  return {
+    isArchived: false,
+    isExistingClient: false,
+    opportunities: { every: { stage: "PROSPECT" } },
+  };
 }
 
 export function directorySearch(q?: string): Prisma.OrganizationWhereInput {

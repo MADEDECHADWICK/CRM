@@ -8,7 +8,15 @@ import brandMark from "../assets/ronalds-mark.svg";
 import type { AppShellProps } from "./AppShell.types";
 import "./workspace.css";
 
-const ROLES = { MARKETING_BD: "Administrator", PARTNER: "Partner", MANAGER: "Manager" };
+const ROLES: Record<string, string> = {
+  MARKETING_BD: "Administrator",
+  PARTNER: "Partner",
+  MANAGER: "Manager",
+  PROPOSAL_COORDINATOR: "BD team member",
+  TECHNICAL_REVIEWER: "Technical reviewer",
+  COUNTRY_LEAD: "Country lead",
+  IT_ADMIN: "IT administrator",
+};
 
 export function AppShell({ children, items, active, onSelect }: AppShellProps) {
   const { user, logout } = useAuth();

@@ -47,6 +47,10 @@ import { Alert } from "../lib/dialogs";
 
 const ROLE_LABELS: Record<Role, string> = {
   MARKETING_BD: "Marketing & BD",
+  PROPOSAL_COORDINATOR: "BD team member",
+  TECHNICAL_REVIEWER: "Technical reviewer",
+  COUNTRY_LEAD: "Country lead",
+  IT_ADMIN: "IT administrator",
   PARTNER: "Partner",
   MANAGER: "Manager",
 };
@@ -267,7 +271,7 @@ export function TeamScreen() {
                   <EmptyState
                     icon={IconSet.People}
                     title="No members yet"
-                    subtitle="Add Partners and Managers to staff your service lines."
+                    subtitle="Add BD team members, Partners, team leads and IT administrators."
                   />
                 ) : (
                   rows.map((row) => {
@@ -758,10 +762,19 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [role, setRole] = useState<"PARTNER" | "MANAGER">("PARTNER");
+  const [role, setRole] = useState<"PARTNER" | "MANAGER" | "PROPOSAL_COORDINATOR" | "IT_ADMIN">("PARTNER");
   const [departmentId, setDepartmentId] = useState<string | null>(null);
+  const [supervisorPartnerId, setSupervisorPartnerId] = useState<string | null>(null);
+  const [partners, setPartners] = useState<UserLite[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    apiFetch<UserLite[]>("/users?role=PARTNER", token)
+      .then(setPartners)
+      .catch(() => setPartners([]));
+  }, [token]);
 
   async function submit() {
     if (!token) return;
@@ -779,6 +792,11 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
       return;
     }
 
+    if (role === "MANAGER" && !supervisorPartnerId) {
+      Alert.alert("Partner required", "Choose the Partner this team lead reports to.");
+      return;
+    }
+
     try {
       setBusy(true);
       await apiFetch("/users", token, {
@@ -790,6 +808,7 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
           isAdmin,
           password,
           ...(departmentId ? { departmentId } : {}),
+          ...(role === "MANAGER" && supervisorPartnerId ? { supervisorPartnerId } : {}),
         }),
       });
       onSaved();
@@ -850,15 +869,34 @@ function AddMemberCard({ departments, onSaved }: AddMemberCardProps) {
 
       <Text style={styles.fieldLabel}>Role</Text>
       <View style={styles.formSegmented}>
-        <Segmented<"PARTNER" | "MANAGER">
+        <Segmented<"PROPOSAL_COORDINATOR" | "PARTNER" | "MANAGER" | "IT_ADMIN">
           value={role}
           onChange={setRole}
           options={[
+            { key: "PROPOSAL_COORDINATOR", label: "BD team member" },
             { key: "PARTNER", label: "Partner" },
-            { key: "MANAGER", label: "Manager" },
+            { key: "MANAGER", label: "Team lead" },
+            { key: "IT_ADMIN", label: "IT administrator" },
           ]}
         />
       </View>
+
+      {role === "MANAGER" ? (
+        <>
+          <Text style={styles.fieldLabel}>Reports to Partner</Text>
+          <View style={styles.chipWrap}>
+            {partners.map((partner) => (
+              <Chip
+                key={partner.id}
+                label={partner.name}
+                selected={supervisorPartnerId === partner.id}
+                onPress={() => setSupervisorPartnerId(partner.id)}
+              />
+            ))}
+            {partners.length === 0 ? <Text style={styles.emptyHint}>Add a Partner first.</Text> : null}
+          </View>
+        </>
+      ) : null}
 
       <Text style={styles.fieldLabel}>Department (optional)</Text>
       <View style={styles.chipWrap}>

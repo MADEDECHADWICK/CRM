@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { Organization } from "@crm/core";
 import { AppShell } from "./AppShell";
 
 import { IconSet } from "@crm/ui";
@@ -14,6 +13,7 @@ import { OpportunitiesScreen } from "../screens/OpportunitiesScreen";
 import { FollowupsScreen } from "../screens/FollowupsScreen";
 import { ReportsScreen } from "../screens/ReportsScreen";
 import { TeamScreen } from "../screens/TeamScreen";
+import { GovernanceScreen } from "../screens/GovernanceScreen";
 
 type ScreenName =
   | "HOME"
@@ -22,6 +22,7 @@ type ScreenName =
   | "PIPELINE"
   | "FOLLOWUPS"
   | "REPORTS"
+  | "GOVERNANCE"
   | "TEAM";
 
 function buildScreens(user: {
@@ -35,7 +36,8 @@ function buildScreens(user: {
     { key: "PIPELINE" as const, label: "Pipeline", icon: IconSet.Pipeline },
     { key: "FOLLOWUPS" as const, label: "Follow-ups", icon: IconSet.Bell },
     { key: "REPORTS" as const, label: "Reports", icon: IconSet.Chart },
-    ...(user?.role === "MARKETING_BD" || user?.isAdmin
+    { key: "GOVERNANCE" as const, label: "Proposals", icon: IconSet.Doc },
+    ...(user?.role === "MARKETING_BD" || user?.role === "IT_ADMIN" || user?.isAdmin
       ? [{ key: "TEAM" as const, label: "Team", icon: IconSet.Building }]
       : []),
   ];
@@ -51,7 +53,6 @@ export function AppNavigator() {
   // Client tapped on Home, carried over to Prospects so it can be expanded
   // and scrolled into view on arrival.
   const [focusClientId, setFocusClientId] = useState<string | null>(null);
-  const [opportunityOrganization, setOpportunityOrganization] = useState<Organization | null>(null);
 
   const screens = buildScreens(user);
 
@@ -85,13 +86,12 @@ export function AppNavigator() {
         <ProspectsScreen
           focusOrganizationId={focusClientId}
           onFocusHandled={() => setFocusClientId(null)}
-          onStartOpportunity={organization => { setOpportunityOrganization(organization); setScreen("PIPELINE"); }}
         />
       );
       break;
 
     case "PIPELINE":
-      content = <OpportunitiesScreen initialOrganization={opportunityOrganization} onCreateHandled={() => setOpportunityOrganization(null)} />;
+      content = <OpportunitiesScreen />;
       break;
 
     case "CLIENTS":
@@ -104,6 +104,10 @@ export function AppNavigator() {
 
     case "REPORTS":
       content = <ReportsScreen />;
+      break;
+
+    case "GOVERNANCE":
+      content = <GovernanceScreen />;
       break;
 
     case "TEAM":

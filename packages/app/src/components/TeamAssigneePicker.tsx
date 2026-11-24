@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { canReceiveProspect, isOwnerEligible, tokens, type UserLite } from "@crm/core";
+import { canReceiveProspect, isOwnerEligible, ROLE_LABELS, tokens, type UserLite } from "@crm/core";
 import { Button, Icon, IconSet, TextField } from "@crm/ui";
 import { apiFetch } from "../api";
 
@@ -30,8 +30,8 @@ export function TeamAssigneePicker({ token, value, onChange, disabled = false, i
       {allowUnassigned && <Pressable accessibilityRole="radio" aria-checked={value === null} accessibilityState={{ checked: value === null, disabled }} disabled={disabled} onPress={() => onChange(null)} style={[styles.option, value === null && styles.selected]}>
         <Text style={styles.name}>Unassigned</Text>{value === null && <Icon name={IconSet.Check} size={18} color={tokens.color.brand} />}
       </Pressable>}
-      {filtered.map(member => <Pressable key={member.id} accessibilityRole="radio" accessibilityLabel={`${member.name}, ${member.role === "MARKETING_BD" ? "Administrator" : member.role === "PARTNER" ? "Partner" : "Manager"}${member.id === currentUserId ? ", you" : ""}`} aria-checked={value === member.id} accessibilityState={{ checked: value === member.id, disabled }} disabled={disabled} onPress={() => onChange(member.id)} style={[styles.option, value === member.id && styles.selected]}>
-        <View style={styles.person}><Text style={styles.name}>{member.name}{member.id === currentUserId ? " (you)" : ""}</Text><Text style={styles.meta}>{member.role === "MARKETING_BD" ? "Administrator" : member.role === "PARTNER" ? "Partner" : "Manager"} · {member.email}</Text></View>
+      {filtered.map(member => <Pressable key={member.id} accessibilityRole="radio" accessibilityLabel={`${member.name}, ${ROLE_LABELS[member.role]}${member.id === currentUserId ? ", you" : ""}`} aria-checked={value === member.id} accessibilityState={{ checked: value === member.id, disabled }} disabled={disabled} onPress={() => onChange(member.id)} style={[styles.option, value === member.id && styles.selected]}>
+        <View style={styles.person}><Text style={styles.name}>{member.name}{member.id === currentUserId ? " (you)" : ""}</Text><Text style={styles.meta}>{ROLE_LABELS[member.role]} - {member.email}</Text></View>
         {value === member.id && <Icon name={IconSet.Check} size={18} color={tokens.color.brand} />}
       </Pressable>)}
     </ScrollView>

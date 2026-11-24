@@ -2,10 +2,12 @@ import { SheetCloseButton } from "./SheetCloseButton";
 import { useSheetLayout } from "./useSheetLayout";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
-import { tokens, type UserLite, type DepartmentDetail } from "@crm/core";
+import { ROLE_LABELS, tokens, type UserLite, type DepartmentDetail } from "@crm/core";
 import { Button, Chip, Icon, IconSet, Segmented, TextField } from "@crm/ui";
 import { useAuth } from "../auth/AuthContext";
 import { apiFetch } from "../api";
+
+type EditableRole = "PARTNER" | "MANAGER" | "PROPOSAL_COORDINATOR" | "IT_ADMIN";
 
 export function MemberEditSheet({ member, departments = [], onClose, onSaved }: {
   member?: UserLite; departments?: DepartmentDetail[]; onClose: () => void; onSaved?: () => void;
@@ -16,8 +18,11 @@ export function MemberEditSheet({ member, departments = [], onClose, onSaved }: 
   const [initial, setInitial] = useState<UserLite | null>(member ?? null);
   const [name, setName] = useState(member?.name ?? "");
   const [email, setEmail] = useState(member?.email ?? "");
-  const [role, setRole] = useState<"PARTNER" | "MANAGER">(member?.role === "MANAGER" ? "MANAGER" : "PARTNER");
+  const editableRole: EditableRole = member?.role === "MANAGER" || member?.role === "PROPOSAL_COORDINATOR" || member?.role === "IT_ADMIN" ? member.role : "PARTNER";
+  const [role, setRole] = useState<EditableRole>(editableRole);
   const [departmentId, setDepartmentId] = useState(member?.departmentId ?? null);
+  const [supervisorPartnerId, setSupervisorPartnerId] = useState(member?.supervisorPartnerId ?? null);
+  const [partners, setPartners] = useState<UserLite[]>([]);
   const [isAdmin, setIsAdmin] = useState(member?.isAdmin ?? false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -26,6 +31,10 @@ export function MemberEditSheet({ member, departments = [], onClose, onSaved }: 
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const busy = useRef(false);
+  useEffect(() => {
+    if (self || !token) return;
+    apiFetch<UserLite[]>("/users?role=PARTNER", token).then(setPartners).catch(() => setPartners([]));
+  }, [self, token]);
   useEffect(() => {
     if (!self || !token) return;
     let active = true;
@@ -37,7 +46,7 @@ export function MemberEditSheet({ member, departments = [], onClose, onSaved }: 
   }, [self, token]);
   function close() { if (!busy.current) onClose(); }
   const identityChanged = email.trim().toLowerCase() !== initial?.email.toLowerCase();
-  const changed = initial && (name.trim() !== initial.name || identityChanged || !!newPassword || (!self && (role !== initial.role || departmentId !== (initial.departmentId ?? null) || isAdmin !== initial.isAdmin)));
+  const changed = initial && (name.trim() !== initial.name || identityChanged || !!newPassword || (!self && (role !== initial.role || departmentId !== (initial.departmentId ?? null) || supervisorPartnerId !== (initial.supervisorPartnerId ?? null) || isAdmin !== initial.isAdmin)));
   async function save() {
     if (!token || !initial || busy.current) return;
     if (!name.trim() || !email.trim()) { setError("Enter a name and email address."); return; }
@@ -47,7 +56,7 @@ export function MemberEditSheet({ member, departments = [], onClose, onSaved }: 
     try {
       const updated = await apiFetch<UserLite>(self ? "/users/me" : `/users/${initial.id}`, token, {
         method: "PATCH", body: JSON.stringify({ name: name.trim(), email: email.trim().toLowerCase(),
-          ...(self ? { ...(currentPassword ? { currentPassword } : {}), ...(newPassword ? { newPassword } : {}) } : { role, departmentId, isAdmin }),
+          ...(self ? { ...(currentPassword ? { currentPassword } : {}), ...(newPassword ? { newPassword } : {}) } : { role, departmentId, isAdmin, ...(role === "MANAGER" ? { supervisorPartnerId } : { supervisorPartnerId: null }) }),
         }),
       });
       updateProfile(updated); onSaved?.(); onClose();
@@ -55,7 +64,7 @@ export function MemberEditSheet({ member, departments = [], onClose, onSaved }: 
     finally { busy.current = false; setSaving(false); }
   }
   const eye = <Pressable onPress={() => setVisible(v => !v)} accessibilityRole="button" accessibilityLabel={visible ? "Hide passwords" : "Show passwords"} style={{ padding: 8 }}><Icon name={visible ? IconSet.EyeOff : IconSet.Eye} size={20} color={tokens.color.inkMuted} /></Pressable>;
-  const roleLabel = initial?.role === "MARKETING_BD" ? "Administrator" : initial?.role === "PARTNER" ? "Partner" : "Manager";
+  const roleLabel = initial ? ROLE_LABELS[initial.role] : "";
   return <Modal visible transparent animationType="slide" onRequestClose={close}>
     <View style={[styles.backdrop, sheetLayout.backdrop]}>
       <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Close profile editor" />
@@ -81,7 +90,18 @@ export function MemberEditSheet({ member, departments = [], onClose, onSaved }: 
             </> : <>
               <Text style={styles.sectionLabel}>Access</Text>
               <Text style={styles.fieldLabel}>Role</Text>
-              <Segmented value={role} onChange={v => { if (!saving) setRole(v); }} options={[{ key: "PARTNER", label: "Partner" }, { key: "MANAGER", label: "Manager" }]} />
+              <Segmented<EditableRole> value={role} onChange={v => { if (!saving) setRole(v); }} options={[{ key: "PROPOSAL_COORDINATOR", label: "BD team member" }, { key: "PARTNER", label: "Partner" }, { key: "MANAGER", label: "Team lead" }, { key: "IT_ADMIN", label: "IT administrator" }]} />
+              {role === "MANAGER" ? (
+                <>
+                  <Text style={styles.fieldLabel}>Reports to Partner</Text>
+                  <View style={styles.chips}>
+                    {partners.map(p => (
+                      <Chip key={p.id} label={p.name} selected={supervisorPartnerId === p.id} disabled={saving} onPress={() => setSupervisorPartnerId(p.id)} />
+                    ))}
+                    {partners.length === 0 ? <Text style={styles.hint}>Add a Partner first.</Text> : null}
+                  </View>
+                </>
+              ) : null}
               <Text style={styles.fieldLabel}>Primary department</Text>
               <View style={styles.chips}>
                 <Chip label="No department" selected={departmentId === null} disabled={saving} onPress={() => setDepartmentId(null)} />

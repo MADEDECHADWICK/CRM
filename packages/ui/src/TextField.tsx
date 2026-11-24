@@ -11,6 +11,8 @@ import {
 
 import { tokens } from "@crm/core";
 
+import { webTextInputReset } from "./webStyles";
+
 type TextFieldProps = TextInputProps & {
   label: string;
   error?: string;
@@ -42,7 +44,7 @@ export function TextField({
           accessibilityLabel={props.accessibilityLabel ?? label}
           onFocus={event => { setFocused(true); onFocus?.(event); }}
           onBlur={event => { setFocused(false); onBlur?.(event); }}
-          style={[styles.input, plain && styles.inputPlain, style]}
+          style={[styles.input, plain && styles.inputPlain, webTextInputReset, style]}
           placeholderTextColor={tokens.color.inkFaint}
         />
 

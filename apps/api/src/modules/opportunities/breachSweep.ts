@@ -15,16 +15,16 @@
 //
 // So the flag and the obligation are separated in time:
 //
-//   1. Deadline passes, nothing submitted  -> system moves the deal to
-//      NOT_SUBMITTED and raises a *note debt* on the assignee, due in
-//      BREACH_NOTE_DUE_DAYS.
+//   1. Deadline passes, nothing submitted  -> system raises an OVERDUE FLAG
+//      and a *note debt* on the assignee, due in BREACH_NOTE_DUE_DAYS. The
+//      stage is preserved: an overdue internal date is not proof that the
+//      proposal was never submitted.
 //   2. Assignee writes the explanation     -> debt cleared.
 //   3. Assignee ignores it past its due date -> escalated to a Manager/BD.
 //
 // The obligation is real and is tracked, it is simply owed *afterwards*.
-// This is also why NOT_SUBMITTED is a recoverable stage: a proposal that was
-// ninety per cent drafted should not be destroyed permanently because a date
-// slipped, and the assignee must be able to pick the work back up.
+// The legacy NOT_SUBMITTED stage remains available for explicit/legacy
+// records, but this sweep no longer asserts it automatically.
 //
 // ── Design constraint ──
 //
@@ -82,6 +82,11 @@ export async function flagOverdueProposal(tx: Prisma.TransactionClient, opportun
   // both wrote — duplicate history and duplicate reminders. PostgreSQL
   // re-checks the predicate after resolving the row lock, so the loser
   // matches zero rows.
+  //
+  // IMPORTANT: the stage is deliberately NOT changed. An overdue internal
+  // deadline is an exception, not proof that the proposal was never
+  // submitted. The legacy NOT_SUBMITTED stage remains available for explicit
+  // records and historical data, but the sweep no longer asserts it.
   const claimed = await tx.opportunity.updateMany({
     where: {
       id: opportunityId,
@@ -91,30 +96,32 @@ export async function flagOverdueProposal(tx: Prisma.TransactionClient, opportun
       proposalDueAt: { lt: now },
     },
     data: {
-      stage: "NOT_SUBMITTED",
-      stageEnteredAt: now,
       proposalBreachedAt: now,
       breachNoteRequired: true,
       breachNoteDueAt: noteDueAt,
       breachNoteClearedAt: null,
+      reviewRequired: true,
+      reviewReason: `Internal proposal deadline passed on ${fresh.proposalDueAt.toISOString().slice(0, 10)}. Overdue flag raised; submission status not asserted.`,
     },
   });
   if (claimed.count === 0) return false;
 
-  // The system is the actor here, not a person — ActorType.SYSTEM plus
-  // a systemReason is what keeps this transition as auditable as a
-  // manual one instead of being an unexplained gap in the history.
-  await tx.stageHistoryEntry.create({
+  // The system is the actor here, not a person. The audit event records the
+  // overdue flag/escalation without inventing a stage transition.
+  await tx.auditEvent.create({
     data: {
-      opportunityId,
-      fromStage: fresh.stage,
-      toStage: "NOT_SUBMITTED",
-      changedById: null,
+      actorId: null,
       actorType: "SYSTEM",
-      reason: null,
-      systemReason:
-        `BD drafting deadline of ${fresh.proposalDueAt.toISOString().slice(0, 10)} ` +
-        `passed with nothing submitted (${rag.daysRemaining} days overdue).`,
+      action: "UPDATE",
+      entityType: "Opportunity",
+      entityId: opportunityId,
+      summary: "Proposal deadline overdue — escalation raised",
+      metadata: {
+        proposalDueAt: fresh.proposalDueAt.toISOString(),
+        daysOverdue: rag.daysRemaining,
+        stagePreserved: fresh.stage,
+        note: "Overdue flag does not assert a not-submitted outcome.",
+      },
     },
   });
 
@@ -126,7 +133,7 @@ export async function flagOverdueProposal(tx: Prisma.TransactionClient, opportun
   if (assigneeId) {
     await tx.followup.create({
       data: {
-        note: `Explain why "${fresh.title}" was not submitted by its BD deadline`,
+        note: `Explain why "${fresh.title}" missed its BD drafting deadline`,
         type: "CALL",
         dueAt: noteDueAt,
         opportunityId: fresh.id,

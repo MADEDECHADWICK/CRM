@@ -30,6 +30,9 @@ const createSchema = z.object({
   address: nullableText,
   website: nullableText,
   country: nullableText,
+  contractingEntityId: z.string().uuid().nullable().optional(),
+  officeId: z.string().uuid().nullable().optional(),
+  parentOrganizationId: z.string().uuid().nullable().optional(),
   assignedToId: z.string().uuid().nullable().optional(),
   assignedDepartmentId: z.string().uuid().nullable().optional(),
 });
@@ -45,6 +48,9 @@ const updateSchema = z.object({
   address: nullableText,
   website: nullableText,
   country: nullableText,
+  contractingEntityId: z.string().uuid().nullable().optional(),
+  officeId: z.string().uuid().nullable().optional(),
+  parentOrganizationId: z.string().uuid().nullable().optional(),
 });
 
 // Search + filter in one endpoint — BR-001 is a "search before creating"
@@ -71,6 +77,7 @@ organizationsRouter.get("/", async (req: AuthedRequest, res) => {
   }
 
   const where = { AND: [organizationScope(req.user), {
+      ...(req.query.includeArchived === "true" ? {} : { isArchived: false }),
       ...(assignment.data === "mine" ? { assignedToId: req.user!.id }
         : assignment.data === "department" ? { assignedDepartmentId: { in: accessibleDepartmentIds(req.user!) } }
         : assignment.data === "unassigned" ? { assignedToId: null, assignedDepartmentId: null } : {}),

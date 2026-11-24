@@ -51,6 +51,7 @@ export function DateTimeInput({
         border: "1px solid #d8d8de",
         borderRadius: 8,
         fontFamily: "inherit",
+        outline: "none",
       }}
     />
   );

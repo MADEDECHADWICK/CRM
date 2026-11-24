@@ -7,20 +7,18 @@ or revenue. One organization can have several genuine service opportunities.
 
 ## Starting work
 
-1. Open **Prospects**, expand an assigned organization, and select
-   **Start opportunity**. Its organization and assigned department carry into
-   the form. Alternatively, select **Add opportunity** in Pipeline and search
-   the full accessible directory.
-2. Enter the title and service, select Prospect or Lead, and record the real
-   lead source. Enter an estimated deal value only if known; workbook planning
-   fees are never automatically copied into opportunities.
-3. Confirm the department and owner. Its head is the default. A different
-   owner requires a reason and must already have access to the account through
-   its assignment or department. Reassign the prospect first when handing it
-   to a different team.
-4. Select **Create opportunity**. The deal opens with its ownership and initial
-   stage recorded. Administrators, Partners and Managers may raise opportunities
-   for accounts within their authorized access.
+1. Open **Prospects**, expand an organization and assign it to a person and/or
+   department. The CRM automatically creates the initial Prospect-stage
+   opportunity in Pipeline, owned by the assigned person or their department
+   head. There is no separate **Start opportunity** or **Add opportunity**
+   action.
+2. The automatic opportunity starts with service "Service to be confirmed",
+   source `OTHER` with an explicit note, and a next action. Update the service
+   and qualification details as the real requirement becomes known.
+3. Reassigning the prospect moves the existing Prospect-stage opportunity to
+   the new owner/department and records an ownership change with a reason.
+4. Administrators, Partners and Managers see the new prospect in Pipeline
+   immediately; it is not counted as a win, proposal or revenue.
 
 ## Progress and follow-ups
 
@@ -41,19 +39,38 @@ or revenue. One organization can have several genuine service opportunities.
   available in the pipeline's outcome filters.
 
 Every manual stage change requires a reason. The API enforces the permitted
-transitions; the automatic Not submitted stage is not a manual option.
+transitions; the legacy Not submitted stage is not offered as a manual action
+and is no longer set automatically by the deadline sweep.
 
 ## Deadlines and measurement
 
 Set an internal drafting deadline while work is being prepared. Its RAG badge
 shows whether drafting is on track, due soon, due now or overdue. The scheduled
-API sweep flags overdue, unsubmitted work as Not submitted and creates an
-explanation reminder. It runs at API startup and hourly while the API is running.
+API sweep now raises an overdue flag, an audit event, an escalation and an
+explanation reminder. It does **not** automatically assert that the proposal was
+not submitted. The sweep runs at API startup and hourly while the API is running.
 
 A revised deadline does not erase an explanation owed or bypass the proposal
-completeness check. Recovering an expired draft clears its old deadline so the
-same missed date does not immediately flag it again; issue a new deadline as
-needed. Record the explanation separately to complete its reminder.
+completeness check. Overdue history is preserved in the audit trail. Record the
+explanation separately to complete its reminder.
+
+Proposal progress (Pending inputs, In preparation, In review, Changes
+requested, Approved, Submitted, Not submitted) is now tracked on proposal
+revisions, separately from the opportunity outcome (Open, On hold, Won, Lost,
+Withdrawn, Client cancelled, No award, No-bid, No response). A proposal may be
+Submitted while its opportunity is Won.
+
+Proposal workflow:
+
+1. A Partner assigns the team lead (Manager), BD owner and signing Partner.
+2. The team lead prepares the technical proposal and confirms technical
+   completion.
+3. The BD owner completes the versioned Proposal Quality Review Checklist
+   (sections A-E) and sends it to the Partner, or returns it to the team lead.
+4. The signing Partner signs off (section F), returns it to the BD owner, or
+   returns it to the team lead.
+5. Only after Partner sign-off can dispatch be recorded. A material change after
+   approval invalidates the approval and returns the revision to the team lead.
 
 Pipeline tabs and the Overview chart use scoped server totals across all
 pages. Search covers opportunity titles, services and organization names.

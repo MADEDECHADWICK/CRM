@@ -120,6 +120,10 @@ export const STAGE_COLORS: Record<Stage, { text: string; bg: string; dot: string
   NOT_SUBMITTED: { text: "#9f1239", bg: "#fff1f2", dot: "#f43f5e" },
   WON:       { text: "#047857", bg: "#ecfdf5", dot: "#10b981" },
   LOST:      { text: "#b91c1c", bg: "#fef2f2", dot: "#ef4444" },
+  WITHDRAWN: { text: "#6b21a8", bg: "#faf5ff", dot: "#a855f7" },
+  CLIENT_CANCELLED: { text: "#9a3412", bg: "#fff7ed", dot: "#fb923c" },
+  NO_AWARD:  { text: "#854d0e", bg: "#fefce8", dot: "#eab308" },
+  NO_BID:    { text: "#334155", bg: "#f8fafc", dot: "#64748b" },
   NO_REPLY:  { text: "#475569", bg: "#f1f5f9", dot: "#94a3b8" },
   DEFERRED:  { text: "#c2410c", bg: "#fff7ed", dot: "#f97316" },
 };
@@ -138,6 +142,10 @@ export const STAGE_LABELS: Record<Stage, string> = {
   NOT_SUBMITTED: "Not Submitted",
   WON: "Won",
   LOST: "Lost",
+  WITHDRAWN: "Withdrawn",
+  CLIENT_CANCELLED: "Client Cancelled",
+  NO_AWARD: "No Award",
+  NO_BID: "No-bid",
   NO_REPLY: "No Reply",
   DEFERRED: "Deferred",
 };
@@ -166,9 +174,11 @@ export const RAG_COLORS: Record<
   SUBMITTED: { text: "#047857", bg: "#ecfdf5", dot: "#10b981" },
 };
 
-// Human-readable labels for follow-up types (CALL | EMAIL | MEETING).
+// Human-readable labels for follow-up types.
 export const FOLLOWUP_TYPE_LABELS: Record<FollowupType, string> = {
   CALL: "Call",
   EMAIL: "Email",
   MEETING: "Meeting",
+  TASK: "Task",
+  HANDOVER: "Handover",
 };

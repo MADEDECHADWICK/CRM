@@ -18,6 +18,8 @@ import {
   REPORT_CURRENCIES,
   REPORT_PERIOD_LABELS,
   SCORECARD_DIMENSIONS,
+  STAGES,
+  STAGE_LABELS,
   tokens,
   type ReportPeriod,
   type ScorecardDimension,
@@ -75,6 +77,160 @@ type ReportSectionProps = {
   controls?: ReactNode;
   note?: string;
 };
+
+type CohortData = {
+  submittedCount: number;
+  wonCount: number;
+  lostCount: number;
+  openCount: number;
+  pendingCount: number;
+  unmatchedCount: number;
+  conversionByCount: number | null;
+  conversionByValue: number | null;
+  unavailableValueCount: number;
+  asOf: string;
+  basis: string;
+};
+
+type RatioData = {
+  winsBooked: number;
+  proposalsSubmitted: number;
+  ratio: number | null;
+  basis: string;
+};
+
+function CohortPanel({ query, token, reloadKey }: { query: string; token: string; reloadKey: number }) {
+  const [cohort, setCohort] = useState<CohortData | null>(null);
+  const [ratio, setRatio] = useState<RatioData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setError(null);
+    Promise.all([
+      apiFetch<CohortData>(`/reporting/cohort-conversion${query}`, token),
+      apiFetch<RatioData>(`/reporting/activity-ratio${query}`, token),
+    ])
+      .then(([c, r]) => { if (active) { setCohort(c); setRatio(r); } })
+      .catch((err) => { if (active) setError(err instanceof Error ? err.message : "Unable to load conversion metrics"); });
+    return () => { active = false; };
+  }, [query, token, reloadKey]);
+
+  return (
+    <Card>
+      <Text style={styles.filterLabel}>Cohort conversion and period activity ratio</Text>
+      {error ? <Text style={styles.error}>{error}</Text> : !cohort || !ratio ? <ActivityIndicator color={tokens.color.brand} /> : (
+        <View style={{ gap: 8 }}>
+          <Text style={styles.td}>Cohort submitted: {cohort.submittedCount} · won {cohort.wonCount} · lost {cohort.lostCount} · open {cohort.openCount} · pending/unmatched {cohort.pendingCount + cohort.unmatchedCount}</Text>
+          <Text style={styles.td}>Cohort conversion by count: {fmt(cohort.conversionByCount)} · by value: {fmt(cohort.conversionByValue)}</Text>
+          <Text style={styles.td}>Value unavailable for {cohort.unavailableValueCount} cohort record(s). As of {new Date(cohort.asOf).toLocaleString()}.</Text>
+          <Text style={styles.td}>Period activity ratio: {ratio.winsBooked} wins booked / {ratio.proposalsSubmitted} submitted = {fmt(ratio.ratio)}</Text>
+          <Text style={styles.note}>{cohort.basis}</Text>
+          <Text style={styles.note}>{ratio.basis}</Text>
+        </View>
+      )}
+    </Card>
+  );
+}
+
+type StageReportRow = {
+  stage: string;
+  stageLabel: string;
+  count: number;
+  percentage: number;
+  valueKes: number;
+};
+
+type StageBreakdownGroup = {
+  id: string | null;
+  label: string;
+  totalCount: number;
+  totalValueKes: number;
+  unavailableValueCount: number;
+  stages: Record<string, { count: number; valueKes: number }>;
+};
+
+const BREAKDOWN_DIMENSIONS = ["partner", "manager", "teamLead", "department"] as const;
+type BreakdownDimension = (typeof BREAKDOWN_DIMENSIONS)[number];
+
+const DIMENSION_LABELS: Record<BreakdownDimension, string> = {
+  partner: "Partner",
+  manager: "Manager",
+  teamLead: "Team lead",
+  department: "Department",
+};
+
+function StageReportPanel({ query, token, reloadKey, money }: { query: string; token: string; reloadKey: number; money: (value: number) => string }) {
+  const [rows, setRows] = useState<StageReportRow[] | null>(null);
+  const [groups, setGroups] = useState<StageBreakdownGroup[] | null>(null);
+  const [dimension, setDimension] = useState<BreakdownDimension>("partner");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setError(null);
+    Promise.all([
+      apiFetch<{ rows: StageReportRow[] }>(`/reporting/stages${query}`, token),
+      apiFetch<{ groups: StageBreakdownGroup[] }>(`/reporting/stage-breakdown${query}&dimension=${dimension}`, token),
+    ])
+      .then(([stageData, breakdownData]) => {
+        if (!active) return;
+        setRows(stageData.rows);
+        setGroups(breakdownData.groups);
+      })
+      .catch((err) => { if (active) setError(err instanceof Error ? err.message : "Unable to load stage reports"); });
+    return () => { active = false; };
+  }, [query, token, reloadKey, dimension]);
+
+  return (
+    <Card>
+      <View style={styles.downloadRow}>
+        <Text style={styles.filterLabel}>Stage performance</Text>
+        <View style={styles.downloadRow}>
+          <Pressable onPress={() => openReport(`/reporting/stages${query}`, token, "csv")} hitSlop={8}><Text style={styles.download}>CSV</Text></Pressable>
+          <Pressable onPress={() => openReport(`/reporting/stages${query}`, token, "word")} hitSlop={8}><Text style={styles.download}>Word</Text></Pressable>
+        </View>
+      </View>
+      {error ? <Text style={styles.error}>{error}</Text> : !rows ? <ActivityIndicator color={tokens.color.brand} /> : (
+        <View>
+          {rows.map((row) => (
+            <View key={row.stage} style={styles.stageReportRow}>
+              <View style={styles.stageReportMain}>
+                <Text style={styles.stageReportLabel}>{row.stageLabel}</Text>
+                <Text style={styles.stageReportValue}>{money(row.valueKes)}</Text>
+              </View>
+              <Text style={styles.stageReportMeta}>{row.count} opportunities - {(row.percentage * 100).toFixed(1)}%</Text>
+              <Pressable onPress={() => openReport(`/reporting/stages${query}&stage=${row.stage}`, token, "csv")} hitSlop={8}>
+                <Text style={styles.download}>Export</Text>
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      )}
+
+      <View style={styles.breakdownHeader}>
+        <Text style={styles.filterLabel}>Breakdown by</Text>
+        <Pressable onPress={() => openReport(`/reporting/stage-breakdown${query}&dimension=${dimension}`, token, "csv")} hitSlop={8}><Text style={styles.download}>CSV</Text></Pressable>
+        <Pressable onPress={() => openReport(`/reporting/stage-breakdown${query}&dimension=${dimension}`, token, "word")} hitSlop={8}><Text style={styles.download}>Word</Text></Pressable>
+      </View>
+      <Segmented value={dimension} onChange={setDimension} options={BREAKDOWN_DIMENSIONS.map((key) => ({ key, label: DIMENSION_LABELS[key] }))} />
+      {!groups ? <ActivityIndicator color={tokens.color.brand} /> : groups.length === 0 ? <Text style={styles.empty}>No grouped stage data for this period.</Text> : groups.map((group) => (
+        <View key={group.id ?? group.label} style={styles.breakdownGroup}>
+          <View style={styles.stageReportMain}>
+            <Text style={styles.stageReportLabel}>{group.label}</Text>
+            <Text style={styles.stageReportValue}>{money(group.totalValueKes)}</Text>
+          </View>
+          <Text style={styles.stageReportMeta}>{group.totalCount} opportunities{group.unavailableValueCount ? ` - ${group.unavailableValueCount} value(s) unavailable` : ""}</Text>
+          {STAGES.filter((stage) => group.stages[stage]?.count).map((stage) => (
+            <Text key={stage} style={styles.breakdownStageLine}>
+              {STAGE_LABELS[stage]}: {group.stages[stage].count} - {money(group.stages[stage].valueKes)}
+            </Text>
+          ))}
+        </View>
+      ))}
+    </Card>
+  );
+}
 
 function ReportSection({ title, path, headers, toCells, token, reloadKey, controls, note }: ReportSectionProps) {
   const [rows, setRows] = useState<Record<string, unknown>[] | null>(null);
@@ -355,14 +511,18 @@ export function ReportsScreen() {
           toCells={(r) => [String(r.label), r.leads as number, r.reachedProposal as number, r.won as number, num(r.wonValue)]}
         />
 
+        <CohortPanel query={q} token={token} reloadKey={reloadKey} />
+
+        <StageReportPanel query={q} token={token} reloadKey={reloadKey} money={num} />
+
         <ReportSection
           title="Prequalifications"
           path={`/reporting/prequalifications${q}`}
           token={token}
           reloadKey={reloadKey}
-          headers={["Client", "Country", "Service", "Department", "Stage", "Amount", "Owner", "Submitted"]}
-          toCells={(r) => [String(r.client), String(r.country), String(r.service), String(r.department), String(r.stage), num(r.amount), String(r.owner), String(r.submitted)]}
-          note="Prequalifications are reported separately from RFP/RFQ tenders."
+          headers={["Client", "Country", "Service", "Department", "Status", "Cost", "Owner", "Submitted", "Accepted"]}
+          toCells={(r) => [String(r.client), String(r.country), String(r.service), String(r.department), String(r.status), num(r.cost), String(r.owner), String(r.submitted), String(r.accepted)]}
+          note="Supplier-panel applications are reported separately. Acceptance is never a win or proposal revenue."
         />
 
         <ReportSection
@@ -440,4 +600,12 @@ const styles = StyleSheet.create({
   error: { ...tokens.type.caption, color: tokens.color.danger },
   empty: { ...tokens.type.caption, color: tokens.color.inkMuted },
   note: { ...tokens.type.micro, letterSpacing: 0, color: tokens.color.inkFaint, marginTop: 12 },
+  stageReportRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: tokens.color.border },
+  stageReportMain: { flex: 1, flexDirection: "row", justifyContent: "space-between", gap: 10 },
+  stageReportLabel: { ...tokens.type.bodyStrong, color: tokens.color.ink },
+  stageReportValue: { ...tokens.type.body, color: tokens.color.brand, fontWeight: "700" },
+  stageReportMeta: { ...tokens.type.caption, color: tokens.color.inkMuted, minWidth: 150 },
+  breakdownHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 22, marginBottom: 10 },
+  breakdownGroup: { marginTop: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: tokens.color.border },
+  breakdownStageLine: { ...tokens.type.caption, color: tokens.color.inkMuted, marginTop: 3, paddingLeft: 8 },
 });
