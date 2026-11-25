@@ -74,6 +74,9 @@ export async function updateUser(tx: Prisma.TransactionClient, actor: AccessUser
     }
     const nextRole = values.role ?? user.role;
     const nextDepartment = values.departmentId === undefined ? user.departmentId : values.departmentId;
+    if (nextRole === "MANAGER" && user.headedDepartments.some(d => d.id !== nextDepartment)) {
+      throw new UserUpdateError(409, "HEADSHIP_CONFLICT", "Reappoint the heads of other departments before making this person a Manager or changing their primary department.");
+    }
     if (values.supervisorPartnerId) {
       const supervisor = await tx.user.findUnique({ where: { id: values.supervisorPartnerId }, select: { role: true, isActive: true } });
       if (!supervisor || !supervisor.isActive || supervisor.role !== "PARTNER") {
@@ -83,9 +86,6 @@ export async function updateUser(tx: Prisma.TransactionClient, actor: AccessUser
     const nextSupervisor = values.supervisorPartnerId === undefined ? user.supervisorPartnerId : values.supervisorPartnerId;
     if (nextRole === "MANAGER" && !nextSupervisor) {
       throw new UserUpdateError(400, "SUPERVISOR_REQUIRED", "Choose the Partner this team lead reports to.");
-    }
-    if (nextRole === "MANAGER" && user.headedDepartments.some(d => d.id !== nextDepartment)) {
-      throw new UserUpdateError(409, "HEADSHIP_CONFLICT", "Reappoint the heads of other departments before making this person a Manager or changing their primary department.");
     }
     // Disabling a leaver preserves history. The account is blocked at request
     // time by requireAuth; records remain attributable.

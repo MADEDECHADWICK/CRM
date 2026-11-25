@@ -14,17 +14,18 @@ test("profile edits, multiple headships, scoped performance and revocation", {
   const { prisma } = await import("../lib/prisma");
   const rollback = new Error("team verification rollback");
   const suffix = randomUUID();
-  const a = randomUUID(), b = randomUUID(), other = randomUUID(), emptyId = randomUUID();
+  const a = randomUUID(), b = randomUUID(), other = randomUUID(), emptyId = randomUUID(), supervisorId = randomUUID();
   const admin: AccessUser = { id: randomUUID(), role: "MARKETING_BD" };
   const partner: AccessUser = { id: randomUUID(), role: "PARTNER", departmentId: a };
   const manager: AccessUser = { id: randomUUID(), role: "MANAGER", departmentId: a };
-  const ids = [admin.id, partner.id, manager.id];
+  const supervisor: AccessUser = { id: supervisorId, role: "PARTNER" };
+  const ids = [admin.id, partner.id, manager.id, supervisorId];
   const orgA = randomUUID(), orgB = randomUUID(), orgOther = randomUUID(), hidden = randomUUID();
   try {
     await assert.rejects(prisma.$transaction(async tx => {
       await tx.department.createMany({ data: [a, b, other].map((id, i) => ({ id, name: `Team verification ${i} ${suffix}` })) });
       const passwordHash = await bcrypt.hash("Original Password 123", 4);
-      await tx.user.createMany({ data: [admin, partner, manager].map((u, i) => ({ id: u.id, role: u.role, departmentId: u.departmentId, name: `Verification ${i}`, email: `${i}-${suffix}@example.invalid`, passwordHash })) });
+      await tx.user.createMany({ data: [admin, partner, manager, supervisor].map((u, i) => ({ id: u.id, role: u.role, departmentId: u.departmentId, name: `Verification ${i}`, email: `${i}-${suffix}@example.invalid`, passwordHash })) });
       await setDepartmentHead(tx, admin, a, partner.id);
       await setDepartmentHead(tx, admin, b, partner.id);
       assert.equal(await tx.department.count({ where: { headId: partner.id } }), 2);
@@ -88,7 +89,7 @@ test("profile edits, multiple headships, scoped performance and revocation", {
       assert.equal(after.combined.activeProposalValue, 0);
       // Empty departments stay visible, and a Manager can lead their own.
       await setDepartmentHead(tx, admin, a, manager.id);
-      const demoted = await updateUser(tx, admin, partner.id, { role: "MANAGER" });
+      const demoted = await updateUser(tx, admin, partner.id, { role: "MANAGER", supervisorPartnerId: supervisorId });
       assert.equal(demoted.role, "MANAGER");
       await setDepartmentHead(tx, admin, other, partner.id);
       const empty = await departmentPerformance(tx, manager, manager.id);
