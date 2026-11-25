@@ -7,6 +7,7 @@ import { updateUser, UserUpdateError } from "../modules/users/userActions";
 import { setDepartmentHead } from "../modules/departments/departmentActions";
 import { departmentPerformance } from "../modules/reporting/departmentPerformance";
 import { organizationScope, type AccessUser } from "../lib/accessScope";
+import { toKes } from "@crm/core";
 
 test("profile edits, multiple headships, scoped performance and revocation", {
   skip: process.env.RUN_DB_INTEGRATION !== "true", timeout: 180_000,
@@ -69,11 +70,12 @@ test("profile edits, multiple headships, scoped performance and revocation", {
       const report = await departmentPerformance(tx, actor, partner.id);
       assert.equal(report.departments.length, 2);
       assert.equal(report.combined.wonCount, 2);
-      assert.equal(report.combined.wonValue, 112899);
+      const usd100Kes = toKes(100, "USD")!;
+      assert.equal(report.combined.wonValue, 99999 + usd100Kes);
       assert.equal(report.combined.activeProposalValue, 200);
       assert.equal(report.combined.lostValue, 50);
       assert.equal(report.personal.wonCount, 2);
-      assert.equal(report.personal.wonValue, 13200);
+      assert.equal(report.personal.wonValue, 300 + usd100Kes);
       assert.equal(report.departments.find(d => d.id === b)!.counts.PROPOSAL, 1);
       assert.equal(await tx.organization.count({ where: { AND: [{ id: hidden }, organizationScope(actor)] } }), 0);
       assert.ok(!JSON.stringify(report).includes(hidden));
