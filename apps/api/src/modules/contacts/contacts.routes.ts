@@ -1,7 +1,7 @@
 import { Router, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma";
-import { requireAuth, AuthedRequest, contactScope, organizationScope } from "../../middleware/authorize";
+import { requireAuth, AuthedRequest, contactScope, organizationScope, opportunityScope } from "../../middleware/authorize";
 import { paginationSchema, pageOf } from "../../lib/pagination";
 import { canManageStaff } from "@crm/core";
 
@@ -63,7 +63,18 @@ const updateSchema = z.object({
 
 // A contact always belongs to an organization, so every read/write is
 // filtered through it rather than trusting a bare contact id.
-const withOrganization = { organization: true } as const;
+function contactInclude(user: AuthedRequest["user"]) {
+  return {
+    organization: {
+      include: {
+        opportunities: {
+          where: opportunityScope(user),
+          select: { stage: true },
+        },
+      },
+    },
+  } as const;
+}
 
 // Parsed rather than read straight off req.params: Express types a param as
 // `string | string[]`, and an unvalidated id also reaches Prisma as a
@@ -116,7 +127,7 @@ contactsRouter.get("/", async (req: AuthedRequest, res) => {
           }
         : {}),
     },
-    include: withOrganization,
+    include: contactInclude(req.user),
     // Primary contact first, then alphabetical — the person you call by
     // default should be at the top of the list.
     orderBy: [{ isPrimary: "desc" }, { name: "asc" }],
@@ -132,7 +143,7 @@ contactsRouter.get("/:id", async (req: AuthedRequest, res) => {
 
   const contact = await prisma.contact.findFirst({
     where: { id, ...contactScope(req.user) },
-    include: withOrganization,
+    include: contactInclude(req.user),
   });
 
   if (!contact) {
@@ -192,7 +203,7 @@ contactsRouter.post("/", async (req: AuthedRequest, res) => {
         ...fields,
         organizationId,
       },
-      include: withOrganization,
+      include: contactInclude(req.user),
     });
   }, { isolationLevel: "Serializable" });
 
@@ -239,7 +250,7 @@ contactsRouter.patch("/:id", async (req: AuthedRequest, res) => {
     return tx.contact.update({
       where: { id: existing.id, AND: [contactScope(req.user)] },
       data,
-      include: withOrganization,
+      include: contactInclude(req.user),
     });
   }, { isolationLevel: "Serializable" });
 

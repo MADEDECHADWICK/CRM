@@ -15,6 +15,9 @@ governanceRouter.use(requireAuth);
 
 /** Settings are readable by signed-in users; only configurators may change them. */
 governanceRouter.get("/settings", async (req: AuthedRequest, res) => {
+  if (!canConfigureSystem(req.user!.role, req.user!.isAdmin)) {
+    return res.status(403).json({ success: false, error: { code: "FORBIDDEN", message: "Configuration is restricted to Marketing & BD oversight and IT administrators." } });
+  }
   const rows = await prisma.systemSetting.findMany({ orderBy: { key: "asc" } });
   const stored = new Map(rows.map((r) => [r.key, r.value]));
   const keys = new Set([...Object.keys(CONFIG_DEFAULTS), ...rows.map((r) => r.key)]);

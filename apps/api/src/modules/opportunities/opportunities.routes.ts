@@ -72,6 +72,7 @@ const listQuerySchema = z
     includeArchived: z.enum(["true", "false"]).optional(),
     outcome: z.enum(OPPORTUNITY_OUTCOMES).optional(),
     view: z.enum(["prospects"]).optional(),
+    proposalReached: z.enum(["true", "false"]).optional(),
   })
   .extend(paginationSchema.shape);
 
@@ -178,6 +179,7 @@ opportunitiesRouter.get("/", async (req: AuthedRequest, res) => {
     ...query.data,
     paginated: query.data.paginated === "true",
     includeArchived: query.data.includeArchived === "true",
+    proposalReached: query.data.proposalReached === "true",
   }, range), { isolationLevel: "RepeatableRead" });
   res.json({ success: true, data: query.data.paginated === "true" ? result : result.items });
 });

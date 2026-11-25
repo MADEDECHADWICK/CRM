@@ -6,11 +6,11 @@ import { DirectoryPager } from "./DirectoryPager";
 import { useDirectoryPage } from "./useDirectoryPage";
 
 /** Search every accessible account instead of offering only the first API page. */
-export function OrganizationPicker({ token, selected, onSelect }: {
-  token: string; selected: Organization | null; onSelect: (organization: Organization | null) => void;
+export function OrganizationPicker({ token, selected, onSelect, view }: {
+  token: string; selected: Organization | null; onSelect: (organization: Organization | null) => void; view?: "prospects";
 }) {
   const [query, setQuery] = useState("");
-  const directory = useDirectoryPage<Organization>("/organizations", token, query);
+  const directory = useDirectoryPage<Organization>(view === "prospects" ? "/organizations?view=prospects" : "/organizations", token, query);
   if (selected) return <Card style={styles.selected}>
     <View style={{ flex: 1, gap: 4 }}><Text style={styles.name}>{selected.name}</Text>
       <Text style={styles.hint}>{[selected.country, selected.assignedDepartment?.name].filter(Boolean).join(" · ")}</Text></View>

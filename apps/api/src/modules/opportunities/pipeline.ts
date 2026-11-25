@@ -20,7 +20,7 @@ export function ragWhere(status: RagStatus, now: Date): Prisma.OpportunityWhereI
 
 export async function listPipeline(tx: Prisma.TransactionClient, user: AccessUser, query: {
   stage?: Stage; rag?: RagStatus; q?: string; ownerId?: string; departmentId?: string;
-  outcome?: string; view?: "prospects"; limit?: number; offset?: number; paginated?: boolean; includeArchived?: boolean;
+  outcome?: string; view?: "prospects"; proposalReached?: boolean; limit?: number; offset?: number; paginated?: boolean; includeArchived?: boolean;
 }, range: { from: Date; to: Date } | null = null, now = new Date()) {
   if (query.view === "prospects") return listProspectAccounts(tx, user, query, now);
   const term = query.q?.trim();
@@ -31,6 +31,7 @@ export async function listPipeline(tx: Prisma.TransactionClient, user: AccessUse
     ...(query.ownerId && user.role !== "MANAGER" ? { ownerId: query.ownerId } : {}),
     ...(query.departmentId ? { departmentId: query.departmentId } : {}),
     ...(query.outcome ? { outcome: query.outcome as never } : {}),
+    ...(query.proposalReached ? { stage: { notIn: ["PROSPECT", "LEAD"] } } : {}),
     ...(term ? { OR: [{ title: contains }, { service: contains }, { organization: { is: { name: contains } } }] } : {}),
   }] };
   const where: Prisma.OpportunityWhereInput = { AND: [base,

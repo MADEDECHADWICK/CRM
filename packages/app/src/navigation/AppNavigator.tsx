@@ -9,6 +9,7 @@ import { LoginScreen } from "../screens/LoginScreen";
 import { HomeScreen } from "../screens/HomeScreen";
 import { ProspectsScreen } from "../screens/ProspectsScreen";
 import { ClientsScreen } from "../screens/ClientsScreen";
+import { ContactsScreen } from "../screens/ContactsScreen";
 import { OpportunitiesScreen } from "../screens/OpportunitiesScreen";
 import { FollowupsScreen } from "../screens/FollowupsScreen";
 import { ReportsScreen } from "../screens/ReportsScreen";
@@ -19,6 +20,7 @@ type ScreenName =
   | "HOME"
   | "PROSPECTS"
   | "CLIENTS"
+  | "CONTACTS"
   | "PIPELINE"
   | "FOLLOWUPS"
   | "REPORTS"
@@ -33,6 +35,7 @@ function buildScreens(user: {
     { key: "HOME" as const, label: "Home", icon: IconSet.Home },
     { key: "PROSPECTS" as const, label: "Prospects", icon: IconSet.People },
     { key: "CLIENTS" as const, label: "Clients", icon: IconSet.Building },
+    { key: "CONTACTS" as const, label: "Contacts", icon: IconSet.Person },
     { key: "PIPELINE" as const, label: "Pipeline", icon: IconSet.Pipeline },
     { key: "FOLLOWUPS" as const, label: "Follow-ups", icon: IconSet.Bell },
     { key: "REPORTS" as const, label: "Reports", icon: IconSet.Chart },
@@ -96,6 +99,10 @@ export function AppNavigator() {
 
     case "CLIENTS":
       content = <ClientsScreen />;
+      break;
+
+    case "CONTACTS":
+      content = <ContactsScreen />;
       break;
 
     case "FOLLOWUPS":

@@ -13,6 +13,7 @@ import {
   PROPOSAL_STATUS_LABELS,
   canConfigureSystem,
   tokens,
+  type Organization,
   type ProposalStatus,
   type Role,
 } from "@crm/core";
@@ -34,6 +35,7 @@ import {
 import { useAuth } from "../auth/AuthContext";
 import { apiFetch } from "../api";
 import { Alert } from "../lib/dialogs";
+import { OrganizationPicker } from "../components/OrganizationPicker";
 
 type Tab = "proposals" | "prequalifications" | "configuration";
 
@@ -150,7 +152,7 @@ export function GovernanceScreen() {
   const [settings, setSettings] = useState<Setting[]>([]);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
-  const [newOrgId, setNewOrgId] = useState("");
+  const [prequalificationOrganization, setPrequalificationOrganization] = useState<Organization | null>(null);
   const [newService, setNewService] = useState("");
 
   const load = useCallback(async () => {
@@ -159,7 +161,7 @@ export function GovernanceScreen() {
     setError(null);
     try {
       if (tab === "proposals") {
-        const data = await apiFetch<{ items: OpportunityRow[] }>("/opportunities?paginated=true&limit=100", token);
+        const data = await apiFetch<{ items: OpportunityRow[] }>("/opportunities?paginated=true&proposalReached=true&limit=100", token);
         setOpportunities(data.items);
         if (!selectedOpportunityId && data.items[0]) setSelectedOpportunityId(data.items[0].id);
       } else if (tab === "prequalifications") {
@@ -277,13 +279,13 @@ export function GovernanceScreen() {
   };
 
   const createPrequalification = () => {
-    if (!token || !newOrgId.trim() || !newService.trim()) return;
+    if (!token || !prequalificationOrganization || !newService.trim()) return;
     void run(async () => {
       await apiFetch("/prequalifications", token, {
         method: "POST",
-        body: JSON.stringify({ organizationId: newOrgId.trim(), service: newService.trim(), status: "DRAFT" }),
+        body: JSON.stringify({ organizationId: prequalificationOrganization.id, service: newService.trim(), status: "DRAFT" }),
       });
-      setNewOrgId("");
+      setPrequalificationOrganization(null);
       setNewService("");
       await load();
     });
@@ -306,6 +308,9 @@ export function GovernanceScreen() {
 
   const selected = opportunities.find((o) => o.id === selectedOpportunityId) ?? null;
   const configurator = !!user && canConfigureSystem(user.role, user.isAdmin);
+  useEffect(() => {
+    if (!configurator && tab === "configuration") setTab("proposals");
+  }, [configurator, tab]);
   const isPartner = user?.role === "PARTNER";
   const canAssignTeam = !!user && (isPartner || user.role === "MARKETING_BD" || user.isAdmin);
   const teamLeads = staff.filter((person) => person.role === "MANAGER");
@@ -314,14 +319,17 @@ export function GovernanceScreen() {
 
   return (
     <Screen>
-      <AppHeader title="Proposal governance" subtitle="Checklists, approvals, prequalifications and configuration" />
+      <AppHeader
+        title="Proposal governance"
+        subtitle={configurator ? "Checklists, approvals, prequalifications and configuration" : "Checklists, approvals and prequalifications"}
+      />
       <Segmented
         value={tab}
         onChange={setTab}
         options={[
           { key: "proposals", label: "Proposals" },
           { key: "prequalifications", label: "Prequalifications" },
-          { key: "configuration", label: "Configuration" },
+          ...(configurator ? [{ key: "configuration" as const, label: "Configuration" }] : []),
         ]}
       />
       <ScrollView refreshControl={<RefreshControl refreshing={loading} onRefresh={load} />} contentContainerStyle={styles.content}>
@@ -536,9 +544,14 @@ export function GovernanceScreen() {
           <>
             <Section title="Applications" />
             <Card>
-              <TextField label="Organization ID" value={newOrgId} onChangeText={setNewOrgId} autoCapitalize="none" />
+              <OrganizationPicker
+                token={token ?? ""}
+                selected={prequalificationOrganization}
+                onSelect={setPrequalificationOrganization}
+                view="prospects"
+              />
               <TextField label="Service" value={newService} onChangeText={setNewService} />
-              <Button title="Add draft application" onPress={createPrequalification} disabled={!newOrgId.trim() || !newService.trim()} />
+              <Button title="Add draft application" onPress={createPrequalification} disabled={!prequalificationOrganization || !newService.trim()} />
               <Text style={styles.rowMeta}>Panel acceptance is recorded separately and never becomes a win or revenue.</Text>
             </Card>
             {prequalifications.length === 0 ? <Card><EmptyState icon={IconSet.Doc} title="No prequalification applications" /></Card> : prequalifications.map((row) => (
